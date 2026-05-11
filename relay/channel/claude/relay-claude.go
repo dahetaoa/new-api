@@ -674,6 +674,9 @@ func shouldSkipClaudeMessageDeltaUsagePatch(info *relaycommon.RelayInfo) bool {
 	if info == nil {
 		return false
 	}
+	if relaycommon.ShouldDirectPassthrough(info) {
+		return true
+	}
 	return info.ChannelSetting.PassThroughBodyEnabled
 }
 

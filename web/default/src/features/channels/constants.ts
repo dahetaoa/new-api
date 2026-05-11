@@ -76,12 +76,13 @@ export const CHANNEL_TYPES = {
   55: 'Sora',
   56: 'Replicate',
   57: 'Codex',
+  58: 'Global Passthrough',
 } as const
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
   1, 14, 33, 24, 43, 3, 41, 48, 42, 34, 20, 4, 40, 27, 25, 17, 26, 15, 46, 23,
   18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21, 44, 2, 5, 36, 50,
-  51, 52, 53, 54, 55, 56,
+  51, 52, 53, 54, 55, 56, 58,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -380,7 +381,7 @@ export const FIELD_DESCRIPTIONS = {
 // ============================================================================
 
 export const MODEL_FETCHABLE_TYPES = new Set([
-  1, 4, 14, 17, 20, 23, 24, 25, 26, 27, 31, 34, 35, 40, 42, 43, 47, 48,
+  1, 4, 14, 17, 20, 23, 24, 25, 26, 27, 31, 34, 35, 40, 42, 43, 47, 48, 58,
 ])
 
 export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
@@ -399,3 +400,16 @@ export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {
   8: 'If connecting to upstream One API or New API relay projects, use OpenAI type instead unless you know what you are doing',
   37: 'Dify channels only support chatflow and agent, and agent does not support images',
 }
+
+// ============================================================================
+// Global Passthrough channel (type 58)
+// ============================================================================
+
+export const GLOBAL_PASSTHROUGH_TYPE = 58
+
+export const GLOBAL_PASSTHROUGH_DEFAULT_PATHS = {
+  global_passthrough_openai_response_path: '/v1/responses',
+  global_passthrough_openai_chat_path: '/v1/chat/completions',
+  global_passthrough_gemini_path: '/v1beta/models/{model}:{action}',
+  global_passthrough_claude_path: '/v1/messages',
+} as const

@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
+	"github.com/QuantumNous/new-api/relay/channel/globalpassthrough"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	"github.com/QuantumNous/new-api/service"
 
@@ -176,6 +177,9 @@ func buildFetchModelsHeaders(channel *model.Channel, key string) (http.Header, e
 		headers = GetClaudeAuthHeader(key)
 	default:
 		headers = GetAuthHeader(key)
+	}
+	if channel.Type == constant.ChannelTypeGlobalPassthrough {
+		return headers, nil
 	}
 
 	headerOverride := channel.GetHeaderOverride()
@@ -972,6 +976,7 @@ func FetchModels(c *gin.Context) {
 		BaseURL string `json:"base_url"`
 		Type    int    `json:"type"`
 		Key     string `json:"key"`
+		Setting string `json:"setting"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -985,6 +990,13 @@ func FetchModels(c *gin.Context) {
 	baseURL := req.BaseURL
 	if baseURL == "" {
 		baseURL = constant.ChannelBaseURLs[req.Type]
+	}
+	if req.Type == constant.ChannelTypeGlobalPassthrough && strings.TrimSpace(baseURL) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Base URL is required",
+		})
+		return
 	}
 
 	// remove line breaks and extra spaces.
@@ -1030,8 +1042,23 @@ func FetchModels(c *gin.Context) {
 		return
 	}
 
+	channelSetting := dto.ChannelSettings{}
+	if strings.TrimSpace(req.Setting) != "" {
+		if err := common.UnmarshalJsonStr(req.Setting, &channelSetting); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "Invalid setting",
+			})
+			return
+		}
+	}
+
 	client := &http.Client{}
-	url := fmt.Sprintf("%s/v1/models", baseURL)
+	modelsPath := "/v1/models"
+	if req.Type == constant.ChannelTypeGlobalPassthrough {
+		modelsPath = globalpassthrough.ResolveModelsPath(channelSetting)
+	}
+	url := fmt.Sprintf("%s%s", baseURL, modelsPath)
 
 	request, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -1068,7 +1095,7 @@ func FetchModels(c *gin.Context) {
 		} `json:"data"`
 	}
 
-	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+	if err := common.DecodeJson(response.Body, &result); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"message": err.Error(),

@@ -428,6 +428,7 @@
     "令牌": "Mã thông báo",
     "令牌不存在": "",
     "令牌分组": "Nhóm mã thông báo",
+    "令牌分组，可多选，留空默认为用户的分组": "Nhóm mã thông báo, có thể chọn nhiều; để trống sẽ dùng nhóm người dùng",
     "令牌分组，默认为用户的分组": "Nhóm mã thông báo, mặc định là nhóm của bạn",
     "令牌分组设为 auto 时，按以下顺序依次尝试选择可用分组，排在前面的优先级更高": "When token group is set to auto, groups are selected in order of priority, with higher priority groups listed first",
     "令牌分组设为 auto 时，系统按优先级顺序自动选择一个可用分组。": "When token group is set to auto, the system automatically selects an available group by priority.",

@@ -52,7 +52,6 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
@@ -123,6 +122,8 @@ import {
   ERROR_MESSAGES,
   FIELD_DESCRIPTIONS,
   FIELD_PLACEHOLDERS,
+  GLOBAL_PASSTHROUGH_DEFAULT_PATHS,
+  GLOBAL_PASSTHROUGH_TYPE,
   MODEL_FETCHABLE_TYPES,
   SUCCESS_MESSAGES,
 } from '../../constants'
@@ -135,7 +136,6 @@ import {
   transformFormDataToUpdatePayload,
   type ChannelFormValues,
   deduplicateKeys,
-  getChannelTypeIcon,
   getKeyPromptForType,
   parseModelsString,
   formatModelsArray,
@@ -159,6 +159,7 @@ import {
 } from '../dialogs/missing-models-confirmation-dialog'
 import { ParamOverrideEditorDialog } from '../dialogs/param-override-editor-dialog'
 import { StatusCodeRiskDialog } from '../dialogs/status-code-risk-dialog'
+import { ChannelTypeIcon } from '../channel-type-icon'
 import { ModelMappingEditor } from '../model-mapping-editor'
 
 type ChannelMutateDrawerProps = {
@@ -464,8 +465,10 @@ export function ChannelMutateDrawer({
 
   const currentTypeLabel = useMemo(
     () =>
-      CHANNEL_TYPE_OPTIONS.find((option) => option.value === currentType)
-        ?.label || `#${currentType}`,
+      currentType > 0
+        ? CHANNEL_TYPE_OPTIONS.find((option) => option.value === currentType)
+            ?.label || `#${currentType}`
+        : 'Select channel type',
     [currentType]
   )
 
@@ -473,13 +476,16 @@ export function ChannelMutateDrawer({
     const options = CHANNEL_TYPE_OPTIONS.map((option) => ({
       value: String(option.value),
       label: t(option.label),
-      icon: getLobeIcon(`${getChannelTypeIcon(option.value)}.Color`, 16),
+      icon: <ChannelTypeIcon type={option.value} size={16} />,
     }))
-    if (!options.some((option) => Number(option.value) === currentType)) {
+    if (
+      currentType > 0 &&
+      !options.some((option) => Number(option.value) === currentType)
+    ) {
       options.push({
         value: String(currentType),
         label: `#${currentType}`,
-        icon: getLobeIcon(`${getChannelTypeIcon(currentType)}.Color`, 16),
+        icon: <ChannelTypeIcon type={currentType} size={16} />,
       })
     }
     return options
@@ -957,8 +963,20 @@ export function ChannelMutateDrawer({
         return
       }
 
-      // Validate status_code_mapping entries
-      if (data.status_code_mapping?.trim()) {
+      // Validate base_url for Global Passthrough channels
+      if (data.type === GLOBAL_PASSTHROUGH_TYPE && !data.base_url?.trim()) {
+        form.setError('base_url', {
+          type: 'manual',
+          message: 'Base URL is required for Global Passthrough channels',
+        })
+        return
+      }
+
+      const isGlobalPassthrough = data.type === GLOBAL_PASSTHROUGH_TYPE
+
+      // Validate status_code_mapping entries (skipped for Global Passthrough,
+      // because the value is stripped from the payload anyway).
+      if (!isGlobalPassthrough && data.status_code_mapping?.trim()) {
         const invalidEntries = collectInvalidStatusCodeEntries(
           data.status_code_mapping
         )
@@ -981,8 +999,9 @@ export function ChannelMutateDrawer({
         }
       }
 
-      // Validate model_mapping JSON format
+      // Validate model_mapping JSON format (skipped for Global Passthrough).
       const hasModelMapping =
+        !isGlobalPassthrough &&
         typeof data.model_mapping === 'string' &&
         data.model_mapping.trim() !== ''
 
@@ -1105,7 +1124,7 @@ export function ChannelMutateDrawer({
           <SheetHeader className='border-b px-4 py-3 text-start sm:px-6 sm:py-4'>
             <SheetTitle className='flex items-center gap-3'>
               <span className='bg-muted flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border'>
-                {getLobeIcon(`${getChannelTypeIcon(currentType)}.Color`, 22)}
+                <ChannelTypeIcon type={currentType} size={22} />
               </span>
               <span>
                 {isEditing ? t('Edit Channel') : t('Create Channel')}
@@ -1132,7 +1151,7 @@ export function ChannelMutateDrawer({
               className='flex-1 space-y-4 overflow-y-auto px-3 py-3 pb-4 sm:space-y-5 sm:px-4'
             >
               {/* ── Basic Information ── */}
-              <div className='bg-card space-y-4 rounded-xl border p-3 sm:p-5'>
+              <div className='space-y-4 pb-4 border-b last:border-b-0 last:pb-0 sm:pb-5'>
                 <CardHeading
                   title={t('Basic Information')}
                   icon={<Server className='h-4 w-4' />}
@@ -1164,7 +1183,7 @@ export function ChannelMutateDrawer({
                         <FormControl>
                           <Combobox
                             options={channelTypeOptions}
-                            value={String(field.value)}
+                            value={field.value > 0 ? String(field.value) : ''}
                             onValueChange={(value) => {
                               const nextType = Number(value)
                               if (Number.isInteger(nextType) && nextType > 0) {
@@ -1227,7 +1246,7 @@ export function ChannelMutateDrawer({
               </div>
 
               {/* ── API Access ── */}
-              <div className='bg-card space-y-4 rounded-xl border p-5'>
+              <div className='space-y-4 pb-4 border-b last:border-b-0 last:pb-0 sm:pb-5'>
                 <CardHeading
                   title={t('API Access')}
                   icon={<Link2 className='h-4 w-4' />}
@@ -1812,7 +1831,11 @@ export function ChannelMutateDrawer({
                     name='base_url'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('Base URL')}</FormLabel>
+                        <FormLabel>
+                          {currentType === GLOBAL_PASSTHROUGH_TYPE
+                            ? t('Base URL *')
+                            : t('Base URL')}
+                        </FormLabel>
                         <FormControl>
                           <Input
                             placeholder={t(FIELD_PLACEHOLDERS.BASE_URL)}
@@ -1828,6 +1851,96 @@ export function ChannelMutateDrawer({
                       </FormItem>
                     )}
                   />
+                )}
+
+                {/* Global Passthrough (type 58) — relative paths inside settings JSON */}
+                {currentType === GLOBAL_PASSTHROUGH_TYPE && (
+                  <>
+                    <Alert>
+                      <AlertDescription>
+                        {t(
+                          'Requests routed to this channel are passed through to upstream in the client request format. Fill only the relative path after the base URL; leave empty to use the standard path.'
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                    <FormField
+                      control={form.control}
+                      name='global_passthrough_openai_response_path'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>OpenAI_Response</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder={
+                                GLOBAL_PASSTHROUGH_DEFAULT_PATHS.global_passthrough_openai_response_path
+                              }
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='global_passthrough_openai_chat_path'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>OpenAI_Chat</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder={
+                                GLOBAL_PASSTHROUGH_DEFAULT_PATHS.global_passthrough_openai_chat_path
+                              }
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='global_passthrough_gemini_path'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Gemini</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder={
+                                GLOBAL_PASSTHROUGH_DEFAULT_PATHS.global_passthrough_gemini_path
+                              }
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              'Supports variables {model} and {action}; if empty, the standard Gemini generateContent / streamGenerateContent path is used.'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='global_passthrough_claude_path'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Claude</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder={
+                                GLOBAL_PASSTHROUGH_DEFAULT_PATHS.global_passthrough_claude_path
+                              }
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
                 )}
 
                 <div className='border-border/60 border-t pt-4'>
@@ -2185,7 +2298,7 @@ export function ChannelMutateDrawer({
               </div>
 
               {/* ── Models & Groups ── */}
-              <div className='bg-card space-y-4 rounded-xl border p-5'>
+              <div className='space-y-4 pb-4 border-b last:border-b-0 last:pb-0 sm:pb-5'>
                 <CardHeading
                   title={t('Models & Groups')}
                   icon={<Boxes className='h-4 w-4' />}
@@ -2448,20 +2561,16 @@ export function ChannelMutateDrawer({
                   render={
                     <button
                       type='button'
-                      className='bg-card hover:bg-accent/50 flex w-full items-center justify-between rounded-xl border px-5 py-4 text-left transition-colors'
+                      className='hover:bg-muted/40 -mx-1 flex w-[calc(100%+0.5rem)] items-center gap-2.5 rounded-md px-1 py-1 text-left transition-colors'
                     />
                   }
                 >
-                  <div className='space-y-0.5'>
-                    <div className='text-[13px] font-semibold'>
-                      {t('Advanced Settings')}
-                    </div>
-                    <div className='text-muted-foreground text-xs'>
-                      {t(
-                        'Request overrides, routing behavior, and upstream model automation'
-                      )}
-                    </div>
-                  </div>
+                  <span className='bg-primary/10 text-primary flex h-8 w-8 items-center justify-center rounded-lg'>
+                    <SlidersHorizontal className='h-4 w-4' />
+                  </span>
+                  <h3 className='flex-1 text-sm font-semibold tracking-tight'>
+                    {t('Advanced Settings')}
+                  </h3>
                   <ChevronDown
                     className={cn(
                       'text-muted-foreground h-4 w-4 shrink-0 transition-transform',
@@ -2470,9 +2579,9 @@ export function ChannelMutateDrawer({
                   />
                 </CollapsibleTrigger>
 
-                <CollapsibleContent className='mt-5 space-y-5'>
+                <CollapsibleContent className='mt-4 space-y-4 sm:mt-5 sm:space-y-5'>
                   {/* ── Routing & Overrides ── */}
-                  <div className='bg-card space-y-4 rounded-xl border p-5'>
+                  <div className='space-y-4 pb-4 border-b last:border-b-0 last:pb-0 sm:pb-5'>
                     <CardHeading
                       title={t('Routing & Overrides')}
                       icon={<Route className='h-4 w-4' />}
@@ -2867,7 +2976,7 @@ export function ChannelMutateDrawer({
                   </div>
 
                   {/* ── Extra Settings ── */}
-                  <div className='bg-card space-y-4 rounded-xl border p-5'>
+                  <div className='space-y-4 pb-4 border-b last:border-b-0 last:pb-0 sm:pb-5'>
                     <CardHeading
                       title={t('Channel Extra Settings')}
                       icon={<Settings className='h-4 w-4' />}

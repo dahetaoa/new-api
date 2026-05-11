@@ -24,9 +24,10 @@ type Token struct {
 	UnlimitedQuota     bool           `json:"unlimited_quota"`
 	ModelLimitsEnabled bool           `json:"model_limits_enabled"`
 	ModelLimits        string         `json:"model_limits" gorm:"type:text"`
+	RateLimits         string         `json:"rate_limits,omitempty" gorm:"type:text"`
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
 	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
-	Group              string         `json:"group" gorm:"default:''"`
+	Group              string         `json:"group" gorm:"type:varchar(1024);default:''"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
@@ -54,6 +55,57 @@ func (token *Token) GetFullKey() string {
 
 func (token *Token) GetMaskedKey() string {
 	return MaskTokenKey(token.Key)
+}
+
+func NormalizeTokenGroup(group string) string {
+	return strings.Join(ParseTokenGroups(group), ",")
+}
+
+func ParseTokenGroups(group string) []string {
+	seen := make(map[string]struct{})
+	groups := make([]string, 0)
+	for _, part := range strings.Split(group, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		groups = append(groups, part)
+	}
+	return groups
+}
+
+func IsAutoTokenGroup(group string) bool {
+	groups := ParseTokenGroups(group)
+	return len(groups) == 1 && groups[0] == "auto"
+}
+
+func (token *Token) GetGroups() []string {
+	if token == nil {
+		return nil
+	}
+	return ParseTokenGroups(token.Group)
+}
+
+func (token *Token) NormalizeGroup() {
+	if token == nil {
+		return
+	}
+	token.Group = NormalizeTokenGroup(token.Group)
+	if !IsAutoTokenGroup(token.Group) {
+		token.CrossGroupRetry = false
+	}
+}
+
+func GetEffectiveTokenGroups(tokenGroup string, userGroup string) []string {
+	groups := ParseTokenGroups(tokenGroup)
+	if len(groups) == 0 && strings.TrimSpace(userGroup) != "" {
+		return []string{strings.TrimSpace(userGroup)}
+	}
+	return groups
 }
 
 func (token *Token) GetIpLimits() []string {
@@ -278,12 +330,14 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 
 func (token *Token) Insert() error {
 	var err error
+	token.NormalizeGroup()
 	err = DB.Create(token).Error
 	return err
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (token *Token) Update() (err error) {
+	token.NormalizeGroup()
 	defer func() {
 		if shouldUpdateRedis(true, err) {
 			gopool.Go(func() {
@@ -297,6 +351,33 @@ func (token *Token) Update() (err error) {
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
 	return err
+}
+
+func (token *Token) UpdateRateLimits(config TokenRateLimitConfig) (err error) {
+	config, err = NormalizeTokenRateLimitConfig(config)
+	if err != nil {
+		return err
+	}
+	rateLimits := ""
+	if config.HasLimit() {
+		data, err := common.Marshal(config)
+		if err != nil {
+			return err
+		}
+		rateLimits = string(data)
+	}
+	token.RateLimits = rateLimits
+	defer func() {
+		if shouldUpdateRedis(true, err) {
+			gopool.Go(func() {
+				err := cacheSetToken(*token)
+				if err != nil {
+					common.SysLog("failed to update token cache: " + err.Error())
+				}
+			})
+		}
+	}()
+	return DB.Model(token).Select("rate_limits").Updates(token).Error
 }
 
 func (token *Token) SelectUpdate() (err error) {

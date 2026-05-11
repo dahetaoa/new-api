@@ -37,10 +37,11 @@ import {
   formatThroughput,
   formatUptimePct,
 } from '@/features/performance-metrics/lib/format'
+import type { DashboardFilters } from '@/features/dashboard/types'
 import type { PerfModelSummary } from '@/features/performance-metrics/types'
 
-const PERFORMANCE_WINDOW_HOURS = 24
 const TOP_MODEL_LIMIT = 8
+const MAX_PERFORMANCE_WINDOW_HOURS = 24 * 30
 
 type WeightedMetric = 'avg_latency_ms' | 'avg_tps' | 'success_rate'
 
@@ -107,6 +108,36 @@ function successDotClassName(successRate: number): string {
   return 'bg-rose-500'
 }
 
+function getPerformanceWindowHours(filters?: DashboardFilters): number {
+  const start = filters?.start_timestamp
+  const end = filters?.end_timestamp
+
+  if (start instanceof Date && end instanceof Date) {
+    const durationMs = end.getTime() - start.getTime()
+    if (Number.isFinite(durationMs) && durationMs > 0) {
+      return Math.min(
+        MAX_PERFORMANCE_WINDOW_HOURS,
+        Math.max(1, Math.ceil(durationMs / (60 * 60 * 1000)))
+      )
+    }
+  }
+
+  return 24
+}
+
+function formatPerformanceWindowLabel(
+  hours: number,
+  t: (key: string, values?: Record<string, unknown>) => string
+): string {
+  if (hours === 1) return t('1 Hour')
+  if (hours % 24 === 0) {
+    const days = hours / 24
+    if (days === 1) return t('1 Day')
+    return t('{{count}} days', { count: days })
+  }
+  return t('{{count}} hours', { count: hours })
+}
+
 function PerformanceMetricItem(props: {
   icon: React.ComponentType<{ className?: string }>
   label: string
@@ -168,11 +199,14 @@ function PerformanceTableHeader(props: { description: string }) {
   )
 }
 
-export function PerformanceOverview() {
+export function PerformanceOverview(props: { filters?: DashboardFilters }) {
   const { t } = useTranslation()
+  const windowHours = getPerformanceWindowHours(props.filters)
+  const windowLabel = formatPerformanceWindowLabel(windowHours, t)
+  const requestsLabel = t('Requests ({{range}})', { range: windowLabel })
   const metricsQuery = useQuery({
-    queryKey: ['perf-metrics-summary', PERFORMANCE_WINDOW_HOURS],
-    queryFn: () => getPerfMetricsSummary(PERFORMANCE_WINDOW_HOURS),
+    queryKey: ['perf-metrics-summary', windowHours],
+    queryFn: () => getPerfMetricsSummary(windowHours),
     staleTime: 60 * 1000,
     retry: false,
   })
@@ -188,7 +222,9 @@ export function PerformanceOverview() {
   const topModels = useMemo(() => models.slice(0, TOP_MODEL_LIMIT), [models])
   const loading = metricsQuery.isLoading
   const hasData = models.length > 0
-  const description = t('Performance metrics for the last 24 hours')
+  const description = t('Performance metrics for the last {{range}}', {
+    range: windowLabel,
+  })
 
   return (
     <section className='space-y-3 sm:space-y-4'>
@@ -196,7 +232,7 @@ export function PerformanceOverview() {
         <div className='divide-border/60 grid grid-cols-2 divide-x sm:grid-cols-4'>
           <PerformanceMetricItem
             icon={Activity}
-            label={t('Requests (24h)')}
+            label={requestsLabel}
             value={formatNumber(summary.totalRequests)}
             hint={t('Monitored relay requests')}
             loading={loading}
@@ -238,9 +274,7 @@ export function PerformanceOverview() {
               <TableHeader>
                 <TableRow className='hover:bg-transparent'>
                   <TableHead>{t('Model')}</TableHead>
-                  <TableHead className='text-right'>
-                    {t('Requests (24h)')}
-                  </TableHead>
+                  <TableHead className='text-right'>{requestsLabel}</TableHead>
                   <TableHead className='text-right'>
                     {t('Average latency')}
                   </TableHead>

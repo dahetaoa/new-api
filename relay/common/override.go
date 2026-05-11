@@ -374,11 +374,17 @@ func getParamOverrideMap(info *RelayInfo) map[string]interface{} {
 	if info == nil || info.ChannelMeta == nil {
 		return nil
 	}
+	if ShouldDirectPassthrough(info) {
+		return nil
+	}
 	return info.ChannelMeta.ParamOverride
 }
 
 func getHeaderOverrideMap(info *RelayInfo) map[string]interface{} {
 	if info == nil || info.ChannelMeta == nil {
+		return nil
+	}
+	if ShouldDirectPassthrough(info) {
 		return nil
 	}
 	return info.ChannelMeta.HeadersOverride

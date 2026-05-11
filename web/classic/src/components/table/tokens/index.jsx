@@ -39,6 +39,7 @@ import TokensFilters from './TokensFilters';
 import TokensDescription from './TokensDescription';
 import EditTokenModal from './modals/EditTokenModal';
 import CCSwitchModal from './modals/CCSwitchModal';
+import TokenRateLimitModal from './modals/TokenRateLimitModal';
 import { useTokensData } from '../../../hooks/tokens/useTokensData';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 import { createCardProPagination } from '../../../helpers/utils';
@@ -66,6 +67,8 @@ function TokensPage() {
   const [prefillKey, setPrefillKey] = useState('');
   const [ccSwitchVisible, setCCSwitchVisible] = useState(false);
   const [ccSwitchKey, setCCSwitchKey] = useState('');
+  const [rateLimitVisible, setRateLimitVisible] = useState(false);
+  const [rateLimitToken, setRateLimitToken] = useState(null);
 
   // Keep latest data for handlers inside notifications
   useEffect(() => {
@@ -199,6 +202,14 @@ function TokensPage() {
     setCCSwitchVisible(true);
   }
   openCCSwitchModalRef.current = openCCSwitchModal;
+
+  const openRateLimitModal = (record) => {
+    if (!record) {
+      return;
+    }
+    setRateLimitToken(record);
+    setRateLimitVisible(true);
+  };
 
   // Prefill to Fluent handler
   const handlePrefillToFluent = async () => {
@@ -391,6 +402,13 @@ function TokensPage() {
         modelOptions={modelOptions}
       />
 
+      <TokenRateLimitModal
+        visible={rateLimitVisible}
+        token={rateLimitToken}
+        onClose={() => setRateLimitVisible(false)}
+        t={t}
+      />
+
       <CardPro
         type='type1'
         descriptionArea={
@@ -408,6 +426,7 @@ function TokensPage() {
               setShowEdit={setShowEdit}
               batchCopyTokens={batchCopyTokens}
               batchDeleteTokens={batchDeleteTokens}
+              openRateLimitModal={openRateLimitModal}
               t={t}
             />
 
@@ -434,7 +453,7 @@ function TokensPage() {
         })}
         t={tokensData.t}
       >
-        <TokensTable {...tokensData} />
+        <TokensTable {...tokensData} openRateLimitModal={openRateLimitModal} />
       </CardPro>
     </>
   );

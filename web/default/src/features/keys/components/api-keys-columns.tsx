@@ -227,10 +227,13 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
       ),
       cell: ({ row }) => {
         const apiKey = row.original
-        const group = row.getValue('group') as string
-        const ratio = group && group !== 'auto' ? groupRatios[group] : undefined
+        const rawGroup = row.getValue('group') as string
+        const groups = (rawGroup || '')
+          .split(',')
+          .map((g) => g.trim())
+          .filter(Boolean)
 
-        if (group === 'auto') {
+        if (groups.length === 1 && groups[0] === 'auto') {
           return (
             <Tooltip>
               <TooltipTrigger
@@ -258,7 +261,22 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
             </Tooltip>
           )
         }
-        return <GroupBadge group={group} ratio={ratio} />
+
+        if (groups.length === 0) {
+          return <GroupBadge group='' />
+        }
+
+        return (
+          <span className='flex flex-wrap items-center gap-1'>
+            {groups.map((g) => (
+              <GroupBadge
+                key={g}
+                group={g}
+                ratio={g === 'auto' ? undefined : groupRatios[g]}
+              />
+            ))}
+          </span>
+        )
       },
       meta: { label: t('Group'), mobileHidden: true },
     },

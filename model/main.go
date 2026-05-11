@@ -1,6 +1,7 @@
 package model
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -254,6 +255,9 @@ func migrateDB() error {
 	if err := migrateTokenModelLimitsToText(); err != nil {
 		return err
 	}
+	if err := migrateTokenGroupToVarchar1024(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -500,6 +504,62 @@ func migrateTokenModelLimitsToText() error {
 			return fmt.Errorf("failed to migrate %s.%s to text: %w", tableName, columnName, err)
 		}
 		common.SysLog(fmt.Sprintf("Successfully migrated %s.%s to text", tableName, columnName))
+	}
+	return nil
+}
+
+// migrateTokenGroupToVarchar1024 keeps old token.group values intact while
+// allowing newer tokens to store multiple comma-separated groups.
+func migrateTokenGroupToVarchar1024() error {
+	if common.UsingSQLite {
+		return nil
+	}
+
+	tableName := "tokens"
+	columnName := "group"
+
+	if !DB.Migrator().HasTable(tableName) {
+		return nil
+	}
+	if !DB.Migrator().HasColumn(&Token{}, columnName) {
+		return nil
+	}
+
+	var alterSQL string
+	if common.UsingPostgreSQL {
+		var dataType string
+		var maxLength sql.NullInt64
+		if err := DB.Raw(`SELECT data_type, character_maximum_length
+			FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
+			tableName, columnName).Row().Scan(&dataType, &maxLength); err != nil {
+			common.SysLog(fmt.Sprintf("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+		} else if strings.EqualFold(dataType, "character varying") && maxLength.Valid && maxLength.Int64 >= 1024 {
+			return nil
+		}
+		alterSQL = fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE varchar(1024)`, tableName, commonGroupCol)
+	} else if common.UsingMySQL {
+		var columnType string
+		if err := DB.Raw(`SELECT COLUMN_TYPE FROM information_schema.columns
+				WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+			tableName, columnName).Scan(&columnType).Error; err != nil {
+			common.SysLog(fmt.Sprintf("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+		} else if strings.HasPrefix(strings.ToLower(columnType), "varchar(") {
+			var size int
+			if _, err := fmt.Sscanf(strings.ToLower(columnType), "varchar(%d)", &size); err == nil && size >= 1024 {
+				return nil
+			}
+		}
+		alterSQL = fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s varchar(1024) DEFAULT ''", tableName, commonGroupCol)
+	} else {
+		return nil
+	}
+
+	if alterSQL != "" {
+		if err := DB.Exec(alterSQL).Error; err != nil {
+			return fmt.Errorf("failed to migrate %s.%s to varchar(1024): %w", tableName, columnName, err)
+		}
+		common.SysLog(fmt.Sprintf("Successfully migrated %s.%s to varchar(1024)", tableName, columnName))
 	}
 	return nil
 }

@@ -24,6 +24,8 @@ import type {
   GetApiKeysResponse,
   SearchApiKeysParams,
   ApiKeyFormData,
+  TokenRateLimitConfig,
+  TokenRateLimitResponse,
 } from './types'
 
 // ============================================================================
@@ -113,5 +115,22 @@ export async function fetchTokenKeysBatch(ids: number[]): Promise<{
   data?: { keys: Record<number, string> }
 }> {
   const res = await api.post('/api/token/batch/keys', { ids })
+  return res.data
+}
+
+// Get token rate-limit configuration
+export async function getTokenRateLimits(
+  id: number
+): Promise<ApiResponse<TokenRateLimitResponse>> {
+  const res = await api.get(`/api/token/rate_limits/${id}`)
+  return res.data
+}
+
+// Update token rate-limit configuration
+export async function updateTokenRateLimits(
+  id: number,
+  config: TokenRateLimitConfig
+): Promise<ApiResponse<TokenRateLimitResponse>> {
+  const res = await api.put(`/api/token/rate_limits/${id}`, config)
   return res.data
 }

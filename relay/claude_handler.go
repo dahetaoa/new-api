@@ -36,9 +36,11 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return types.NewError(fmt.Errorf("failed to copy request to ClaudeRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
 
-	err = helper.ModelMappedHelper(c, info, request)
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+	if !relaycommon.ShouldDirectPassthrough(info) {
+		err = helper.ModelMappedHelper(c, info, request)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+		}
 	}
 
 	adaptor := GetAdaptor(info.ApiType)
@@ -47,63 +49,65 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 	adaptor.Init(info)
 
-	if request.MaxTokens == nil || *request.MaxTokens == 0 {
+	if !relaycommon.ShouldDirectPassthrough(info) && (request.MaxTokens == nil || *request.MaxTokens == 0) {
 		defaultMaxTokens := uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(request.Model))
 		request.MaxTokens = &defaultMaxTokens
 	}
 
-	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(request.Model); ok && effortLevel != "" &&
-		(strings.HasPrefix(request.Model, "claude-opus-4-6") || strings.HasPrefix(request.Model, "claude-opus-4-7")) {
-		request.Model = baseModel
-		request.Thinking = &dto.Thinking{
-			Type: "adaptive",
-		}
-		request.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
-		if strings.HasPrefix(request.Model, "claude-opus-4-7") {
-			// Opus 4.7 rejects non-default temperature/top_p/top_k with 400
-			// and defaults display to "omitted"; restore the 4.6 visible summary.
-			request.Thinking.Display = "summarized"
-			request.Temperature = nil
-			request.TopP = nil
-			request.TopK = nil
-		} else {
-			request.Temperature = common.GetPointer[float64](1.0)
-		}
-		info.UpstreamModelName = request.Model
-	} else if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
-		strings.HasSuffix(request.Model, "-thinking") {
-		if request.Thinking == nil {
-			baseModel := strings.TrimSuffix(request.Model, "-thinking")
-			if strings.HasPrefix(baseModel, "claude-opus-4-7") {
-				// Opus 4.7 rejects thinking.type="enabled"; use adaptive at high effort.
-				request.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
-				request.OutputConfig = json.RawMessage(`{"effort":"high"}`)
+	if !relaycommon.ShouldDirectPassthrough(info) {
+		if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(request.Model); ok && effortLevel != "" &&
+			(strings.HasPrefix(request.Model, "claude-opus-4-6") || strings.HasPrefix(request.Model, "claude-opus-4-7")) {
+			request.Model = baseModel
+			request.Thinking = &dto.Thinking{
+				Type: "adaptive",
+			}
+			request.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
+			if strings.HasPrefix(request.Model, "claude-opus-4-7") {
+				// Opus 4.7 rejects non-default temperature/top_p/top_k with 400
+				// and defaults display to "omitted"; restore the 4.6 visible summary.
+				request.Thinking.Display = "summarized"
 				request.Temperature = nil
 				request.TopP = nil
 				request.TopK = nil
 			} else {
-				// 因为BudgetTokens 必须大于1024
-				if request.MaxTokens == nil || *request.MaxTokens < 1280 {
-					request.MaxTokens = common.GetPointer[uint](1280)
-				}
-
-				// BudgetTokens 为 max_tokens 的 80%
-				request.Thinking = &dto.Thinking{
-					Type:         "enabled",
-					BudgetTokens: common.GetPointer[int](int(float64(*request.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
-				}
-				// TODO: 临时处理
-				// https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
 				request.Temperature = common.GetPointer[float64](1.0)
 			}
+			info.UpstreamModelName = request.Model
+		} else if model_setting.GetClaudeSettings().ThinkingAdapterEnabled &&
+			strings.HasSuffix(request.Model, "-thinking") {
+			if request.Thinking == nil {
+				baseModel := strings.TrimSuffix(request.Model, "-thinking")
+				if strings.HasPrefix(baseModel, "claude-opus-4-7") {
+					// Opus 4.7 rejects thinking.type="enabled"; use adaptive at high effort.
+					request.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
+					request.OutputConfig = json.RawMessage(`{"effort":"high"}`)
+					request.Temperature = nil
+					request.TopP = nil
+					request.TopK = nil
+				} else {
+					// 因为BudgetTokens 必须大于1024
+					if request.MaxTokens == nil || *request.MaxTokens < 1280 {
+						request.MaxTokens = common.GetPointer[uint](1280)
+					}
+
+					// BudgetTokens 为 max_tokens 的 80%
+					request.Thinking = &dto.Thinking{
+						Type:         "enabled",
+						BudgetTokens: common.GetPointer[int](int(float64(*request.MaxTokens) * model_setting.GetClaudeSettings().ThinkingAdapterBudgetTokensPercentage)),
+					}
+					// TODO: 临时处理
+					// https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking
+					request.Temperature = common.GetPointer[float64](1.0)
+				}
+			}
+			if !model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName) {
+				request.Model = strings.TrimSuffix(request.Model, "-thinking")
+			}
+			info.UpstreamModelName = request.Model
 		}
-		if !model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName) {
-			request.Model = strings.TrimSuffix(request.Model, "-thinking")
-		}
-		info.UpstreamModelName = request.Model
 	}
 
-	if info.ChannelSetting.SystemPrompt != "" {
+	if info.ChannelSetting.SystemPrompt != "" && !relaycommon.ShouldDirectPassthrough(info) {
 		if request.System == nil {
 			request.SetStringSystem(info.ChannelSetting.SystemPrompt)
 		} else if info.ChannelSetting.SystemPromptOverride {
@@ -128,8 +132,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 	}
 
-	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled &&
-		!info.ChannelSetting.PassThroughBodyEnabled &&
+	passThroughBody := relaycommon.ShouldPassThroughRequestBody(info)
+	if !relaycommon.ShouldDirectPassthrough(info) &&
+		!passThroughBody &&
 		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
 		openAIRequest, convErr := service.ClaudeToOpenAIRequest(*request, info)
 		if convErr != nil {
@@ -146,7 +151,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	var requestBody io.Reader
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	if passThroughBody {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())

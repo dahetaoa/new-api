@@ -330,6 +330,25 @@ export const getModelCategories = (() => {
  */
 export function getChannelIcon(channelType) {
   const iconSize = 14;
+  const GlobalPassthroughIcon = ({ size = iconSize }) => (
+    <svg
+      xmlns='http://www.w3.org/2000/svg'
+      width={size}
+      height={size}
+      viewBox='0 0 24 24'
+      fill='none'
+      stroke='currentColor'
+      strokeWidth='2'
+      strokeLinecap='round'
+      strokeLinejoin='round'
+      aria-hidden='true'
+      style={{ color: '#06b6d4' }}
+    >
+      <circle cx='6' cy='19' r='3' />
+      <path d='M9 19h8.5a3.5 3.5 0 0 0 0-7H6.5a3.5 3.5 0 0 1 0-7H15' />
+      <circle cx='18' cy='5' r='3' />
+    </svg>
+  );
 
   switch (channelType) {
     case 1: // OpenAI
@@ -405,6 +424,8 @@ export function getChannelIcon(channelType) {
       return <Doubao.Color size={iconSize} />;
     case 56: // Replicate
       return <Replicate size={iconSize} />;
+    case 58: // 全局透传
+      return <GlobalPassthroughIcon />;
     case 8: // 自定义渠道
     case 22: // 知识库：FastGPT
       return <FastGPT.Color size={iconSize} />;

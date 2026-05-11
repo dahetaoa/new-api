@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -153,9 +154,21 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry())
-		if err != nil {
-			return nil, param.TokenGroup, err
+		groups := model.GetEffectiveTokenGroups(param.TokenGroup, userGroup)
+		if len(groups) == 0 {
+			groups = []string{param.TokenGroup}
+		}
+		selectGroup = strings.Join(groups, ",")
+		for _, group := range groups {
+			channel, err = model.GetRandomSatisfiedChannel(group, param.ModelName, param.GetRetry())
+			if err != nil {
+				return nil, group, err
+			}
+			if channel != nil {
+				selectGroup = group
+				common.SetContextKey(param.Ctx, constant.ContextKeyUsingGroup, group)
+				break
+			}
 		}
 	}
 	return channel, selectGroup, nil

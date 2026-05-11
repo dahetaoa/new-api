@@ -95,6 +95,35 @@ export interface ApiKeyFormData {
 }
 
 // ============================================================================
+// Token Rate Limit Types
+// ============================================================================
+
+export interface RateLimitRule {
+  rpm: number
+  rph: number
+  rpd: number
+}
+
+export interface ModelRateLimitRule extends RateLimitRule {
+  model_name: string
+}
+
+export interface TokenRateLimitConfig {
+  total: RateLimitRule
+  models: ModelRateLimitRule[]
+}
+
+export interface TokenRateLimitResponse {
+  token_id: number
+  total: RateLimitRule
+  models: ModelRateLimitRule[]
+  available_models?: string[]
+  model_limit_on?: boolean
+  token_group?: string
+  token_model_limit?: string[]
+}
+
+// ============================================================================
 // Dialog Types
 // ============================================================================
 
@@ -104,3 +133,4 @@ export type ApiKeysDialogType =
   | 'delete'
   | 'batch-delete'
   | 'cc-switch'
+  | 'rate-limit'

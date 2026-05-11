@@ -17,8 +17,29 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
-import { CHANNEL_STATUS, MODEL_FETCHABLE_TYPES } from '../constants'
+import {
+  CHANNEL_STATUS,
+  GLOBAL_PASSTHROUGH_TYPE,
+  MODEL_FETCHABLE_TYPES,
+} from '../constants'
 import type { Channel } from '../types'
+
+const normalizeRelativePathInput = (value: string | undefined): string => {
+  const trimmed = String(value ?? '').trim()
+  if (!trimmed) return ''
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
+}
+
+/**
+ * Normalize base_url: trim whitespace and strip trailing slashes so that
+ * relative path templates (like Global Passthrough's `/v1/...`) don't yield
+ * `https://host//v1/...` after simple concatenation upstream.
+ */
+const normalizeBaseUrlInput = (value: string | null | undefined): string => {
+  const trimmed = String(value ?? '').trim()
+  if (!trimmed) return ''
+  return trimmed.replace(/\/+$/, '')
+}
 
 // ============================================================================
 // Form Validation Schema
@@ -26,7 +47,7 @@ import type { Channel } from '../types'
 
 export const channelFormSchema = z.object({
   name: z.string().min(1, 'Channel name is required'),
-  type: z.number().min(0, 'Channel type is required'),
+  type: z.number().min(1, 'Channel type is required'),
   base_url: z.string().optional(),
   key: z.string(),
   openai_organization: z.string().optional(),
@@ -78,6 +99,11 @@ export const channelFormSchema = z.object({
   upstream_model_update_check_enabled: z.boolean().optional(),
   upstream_model_update_auto_sync_enabled: z.boolean().optional(),
   upstream_model_update_ignored_models: z.string().optional(),
+  // Global passthrough channel (type 58) — paths stored in setting JSON
+  global_passthrough_openai_response_path: z.string().optional(),
+  global_passthrough_openai_chat_path: z.string().optional(),
+  global_passthrough_gemini_path: z.string().optional(),
+  global_passthrough_claude_path: z.string().optional(),
 })
 
 export type ChannelFormValues = z.infer<typeof channelFormSchema>
@@ -88,7 +114,7 @@ export type ChannelFormValues = z.infer<typeof channelFormSchema>
 
 export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   name: '',
-  type: 1,
+  type: 0,
   base_url: '',
   key: '',
   openai_organization: '',
@@ -135,6 +161,10 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
+  global_passthrough_openai_response_path: '',
+  global_passthrough_openai_chat_path: '',
+  global_passthrough_gemini_path: '',
+  global_passthrough_claude_path: '',
 }
 
 // ============================================================================
@@ -156,6 +186,12 @@ export function transformChannelToFormDefaults(
     system_prompt: '',
     system_prompt_override: false,
   }
+  let globalPassthroughPaths = {
+    global_passthrough_openai_response_path: '',
+    global_passthrough_openai_chat_path: '',
+    global_passthrough_gemini_path: '',
+    global_passthrough_claude_path: '',
+  }
 
   if (channel.setting) {
     try {
@@ -167,6 +203,16 @@ export function transformChannelToFormDefaults(
         pass_through_body_enabled: parsed.pass_through_body_enabled || false,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
+      }
+      globalPassthroughPaths = {
+        global_passthrough_openai_response_path:
+          parsed.global_passthrough_openai_response_path || '',
+        global_passthrough_openai_chat_path:
+          parsed.global_passthrough_openai_chat_path || '',
+        global_passthrough_gemini_path:
+          parsed.global_passthrough_gemini_path || '',
+        global_passthrough_claude_path:
+          parsed.global_passthrough_claude_path || '',
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -262,6 +308,7 @@ export function transformChannelToFormDefaults(
     upstream_model_update_check_enabled: upstreamModelUpdateCheckEnabled,
     upstream_model_update_auto_sync_enabled: upstreamModelUpdateAutoSyncEnabled,
     upstream_model_update_ignored_models: upstreamModelUpdateIgnoredModels,
+    ...globalPassthroughPaths,
   }
 }
 
@@ -269,13 +316,34 @@ export function transformChannelToFormDefaults(
  * Build the setting JSON string from form extra settings
  */
 function buildSettingJSON(formData: ChannelFormValues): string {
-  const settingObj = {
-    force_format: formData.force_format || false,
-    thinking_to_content: formData.thinking_to_content || false,
-    proxy: formData.proxy || '',
-    pass_through_body_enabled: formData.pass_through_body_enabled || false,
-    system_prompt: formData.system_prompt || '',
-    system_prompt_override: formData.system_prompt_override || false,
+  const isGlobalPassthrough = formData.type === GLOBAL_PASSTHROUGH_TYPE
+  const settingObj: Record<string, unknown> = {
+    force_format: isGlobalPassthrough ? false : formData.force_format || false,
+    thinking_to_content: isGlobalPassthrough
+      ? false
+      : formData.thinking_to_content || false,
+    proxy: isGlobalPassthrough ? '' : formData.proxy || '',
+    pass_through_body_enabled: isGlobalPassthrough
+      ? false
+      : formData.pass_through_body_enabled || false,
+    system_prompt: isGlobalPassthrough ? '' : formData.system_prompt || '',
+    system_prompt_override: isGlobalPassthrough
+      ? false
+      : formData.system_prompt_override || false,
+    global_passthrough_openai_response_path: isGlobalPassthrough
+      ? normalizeRelativePathInput(
+          formData.global_passthrough_openai_response_path
+        )
+      : '',
+    global_passthrough_openai_chat_path: isGlobalPassthrough
+      ? normalizeRelativePathInput(formData.global_passthrough_openai_chat_path)
+      : '',
+    global_passthrough_gemini_path: isGlobalPassthrough
+      ? normalizeRelativePathInput(formData.global_passthrough_gemini_path)
+      : '',
+    global_passthrough_claude_path: isGlobalPassthrough
+      ? normalizeRelativePathInput(formData.global_passthrough_claude_path)
+      : '',
   }
   return JSON.stringify(settingObj)
 }
@@ -399,27 +467,36 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   channel: Partial<Channel>
 } {
   const mode = formData.multi_key_mode || 'single'
+  const isGlobalPassthrough = formData.type === GLOBAL_PASSTHROUGH_TYPE
+
+  const normalizedBaseUrl = normalizeBaseUrlInput(formData.base_url)
 
   const channel: Partial<Channel> = {
     name: formData.name,
     type: formData.type,
-    base_url: formData.base_url || null,
+    base_url: normalizedBaseUrl || null,
     key: formData.key,
     openai_organization: formData.openai_organization || null,
     models: formData.models,
     group: formatGroups(formData.group),
-    model_mapping: formData.model_mapping || null,
+    model_mapping: isGlobalPassthrough ? null : formData.model_mapping || null,
     priority: formData.priority || null,
     weight: formData.weight || null,
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
     status: formData.status,
-    status_code_mapping: formData.status_code_mapping || null,
+    status_code_mapping: isGlobalPassthrough
+      ? null
+      : formData.status_code_mapping || null,
     tag: formData.tag || null,
     remark: formData.remark || '',
     setting: buildSettingJSON(formData),
-    param_override: formData.param_override || null,
-    header_override: formData.header_override || null,
+    param_override: isGlobalPassthrough
+      ? null
+      : formData.param_override || null,
+    header_override: isGlobalPassthrough
+      ? null
+      : formData.header_override || null,
     settings: buildSettingsJSON(formData),
     other: formData.other || '',
   }
@@ -448,26 +525,34 @@ export function transformFormDataToUpdatePayload(
   formData: ChannelFormValues,
   channelId: number
 ): Partial<Channel> {
+  const isGlobalPassthrough = formData.type === GLOBAL_PASSTHROUGH_TYPE
+  const normalizedBaseUrl = normalizeBaseUrlInput(formData.base_url)
   const payload: Partial<Channel> = {
     id: channelId,
     name: formData.name,
     type: formData.type,
-    base_url: formData.base_url || null,
+    base_url: normalizedBaseUrl || null,
     openai_organization: formData.openai_organization || null,
     models: formData.models,
     group: formatGroups(formData.group),
-    model_mapping: formData.model_mapping || null,
+    model_mapping: isGlobalPassthrough ? null : formData.model_mapping || null,
     priority: formData.priority || null,
     weight: formData.weight || null,
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,
     status: formData.status,
-    status_code_mapping: formData.status_code_mapping || null,
+    status_code_mapping: isGlobalPassthrough
+      ? null
+      : formData.status_code_mapping || null,
     tag: formData.tag || null,
     remark: formData.remark || '',
     setting: buildSettingJSON(formData),
-    param_override: formData.param_override || null,
-    header_override: formData.header_override || null,
+    param_override: isGlobalPassthrough
+      ? null
+      : formData.param_override || null,
+    header_override: isGlobalPassthrough
+      ? null
+      : formData.header_override || null,
     settings: buildSettingsJSON(formData),
     other: formData.other || '',
   }
@@ -485,10 +570,16 @@ export function transformFormDataToUpdatePayload(
   })
 
   // Send explicit empty strings for nullable JSON/text fields so GORM updates can clear them.
-  payload.model_mapping = formData.model_mapping || ''
-  payload.status_code_mapping = formData.status_code_mapping || ''
-  payload.param_override = formData.param_override || ''
-  payload.header_override = formData.header_override || ''
+  payload.model_mapping = isGlobalPassthrough ? '' : formData.model_mapping || ''
+  payload.status_code_mapping = isGlobalPassthrough
+    ? ''
+    : formData.status_code_mapping || ''
+  payload.param_override = isGlobalPassthrough
+    ? ''
+    : formData.param_override || ''
+  payload.header_override = isGlobalPassthrough
+    ? ''
+    : formData.header_override || ''
 
   return payload
 }

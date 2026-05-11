@@ -1648,11 +1648,10 @@ func FetchGeminiModels(baseURL, apiKey, proxyURL string) ([]string, error) {
 		}
 
 		for _, model := range modelsResponse.Models {
-			modelNameValue, ok := model.Name.(string)
-			if !ok {
+			if model.Name == "" {
 				continue
 			}
-			modelName := strings.TrimPrefix(modelNameValue, "models/")
+			modelName := strings.TrimPrefix(model.Name, "models/")
 			allModels = append(allModels, modelName)
 		}
 

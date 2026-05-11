@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useState, useCallback } from 'react'
 import { type Table } from '@tanstack/react-table'
-import { Copy, Trash2, Loader2 } from 'lucide-react'
+import { Copy, Gauge, Trash2, Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
@@ -41,10 +41,20 @@ export function DataTableBulkActions<TData>({
   table,
 }: DataTableBulkActionsProps<TData>) {
   const { t } = useTranslation()
-  const { resolveRealKeysBatch } = useApiKeys()
+  const { resolveRealKeysBatch, setOpen, setCurrentRow } = useApiKeys()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isCopying, setIsCopying] = useState(false)
   const selectedRows = table.getFilteredSelectedRowModel().rows
+
+  const handleOpenRateLimit = useCallback(() => {
+    if (selectedRows.length !== 1) {
+      toast.error(t('Select exactly one API key to manage rate limits'))
+      return
+    }
+    const apiKey = selectedRows[0].original as ApiKey
+    setCurrentRow(apiKey)
+    setOpen('rate-limit')
+  }, [selectedRows, setCurrentRow, setOpen, t])
 
   const handleBatchCopy = useCallback(async () => {
     if (selectedRows.length === 0) return
@@ -102,6 +112,25 @@ export function DataTableBulkActions<TData>({
           </TooltipTrigger>
           <TooltipContent>
             <p>{t('Copy selected keys')}</p>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='outline'
+                size='icon'
+                className='size-8'
+                onClick={handleOpenRateLimit}
+                aria-label={t('Manage rate limit')}
+              />
+            }
+          >
+            <Gauge className='size-4' />
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('Manage rate limit')}</p>
           </TooltipContent>
         </Tooltip>
 

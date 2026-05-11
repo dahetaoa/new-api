@@ -1,15 +1,20 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -75,6 +80,164 @@ func GetToken(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, buildMaskedTokenResponse(token))
+}
+
+func GetTokenRateLimits(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	userId := c.GetInt("id")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	token, err := model.GetTokenByIds(id, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	config, err := token.GetRateLimitConfig()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	availableModels, err := getTokenAvailableModels(token)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"token_id":          id,
+		"total":             config.Total,
+		"models":            config.Models,
+		"available_models":  availableModels,
+		"model_limit_on":    token.ModelLimitsEnabled,
+		"token_group":       token.Group,
+		"token_model_limit": token.GetModelLimits(),
+	})
+}
+
+func UpdateTokenRateLimits(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	userId := c.GetInt("id")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	token, err := model.GetTokenByIds(id, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var config model.TokenRateLimitConfig
+	if err := common.DecodeJson(c.Request.Body, &config); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := token.UpdateRateLimits(config); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	updatedConfig, err := token.GetRateLimitConfig()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"token_id": id,
+		"total":    updatedConfig.Total,
+		"models":   updatedConfig.Models,
+	})
+}
+
+func getTokenAvailableModels(token *model.Token) ([]string, error) {
+	modelSet := make(map[string]struct{})
+	if token.ModelLimitsEnabled {
+		for _, modelName := range token.GetModelLimits() {
+			modelName = strings.TrimSpace(modelName)
+			if modelName != "" {
+				modelSet[modelName] = struct{}{}
+			}
+		}
+		if len(modelSet) > 0 {
+			return sortedModelNames(modelSet), nil
+		}
+	}
+
+	userCache, err := model.GetUserCache(token.UserId)
+	if err != nil {
+		return nil, err
+	}
+	if model.IsAutoTokenGroup(token.Group) {
+		for _, autoGroup := range service.GetUserAutoGroup(userCache.Group) {
+			for _, modelName := range model.GetGroupEnabledModels(autoGroup) {
+				if modelName != "" {
+					modelSet[modelName] = struct{}{}
+				}
+			}
+		}
+	} else {
+		for _, group := range model.GetEffectiveTokenGroups(token.Group, userCache.Group) {
+			for _, modelName := range model.GetGroupEnabledModels(group) {
+				if modelName != "" {
+					modelSet[modelName] = struct{}{}
+				}
+			}
+		}
+	}
+	if len(modelSet) == 0 {
+		for usableGroup := range service.GetUserUsableGroups(userCache.Group) {
+			for _, modelName := range model.GetGroupEnabledModels(usableGroup) {
+				if modelName != "" {
+					modelSet[modelName] = struct{}{}
+				}
+			}
+		}
+	}
+	return sortedModelNames(modelSet), nil
+}
+
+func sortedModelNames(modelSet map[string]struct{}) []string {
+	models := make([]string, 0, len(modelSet))
+	for modelName := range modelSet {
+		models = append(models, modelName)
+	}
+	sort.Strings(models)
+	return models
+}
+
+func validateTokenGroupSelection(userGroup string, tokenGroup string) error {
+	groups := model.ParseTokenGroups(tokenGroup)
+	if len(groups) == 0 {
+		return nil
+	}
+	if model.IsAutoTokenGroup(tokenGroup) {
+		if _, ok := service.GetUserUsableGroups(userGroup)["auto"]; !ok {
+			return errors.New("无权访问 auto 分组")
+		}
+		return nil
+	}
+	usableGroups := service.GetUserUsableGroups(userGroup)
+	for _, group := range groups {
+		if group == "auto" {
+			return errors.New("auto 分组不能与其他分组同时使用")
+		}
+		if _, ok := usableGroups[group]; !ok {
+			return fmt.Errorf("无权访问 %s 分组", group)
+		}
+		if !ratio_setting.ContainsGroupRatio(group) {
+			return fmt.Errorf("分组 %s 已被弃用", group)
+		}
+	}
+	return nil
+}
+
+func getRequestUserGroup(c *gin.Context, userId int) (string, error) {
+	if group := common.GetContextKeyString(c, constant.ContextKeyUserGroup); group != "" {
+		return group, nil
+	}
+	if group := strings.TrimSpace(c.GetString("group")); group != "" {
+		return group, nil
+	}
+	return model.GetUserGroup(userId, false)
 }
 
 func GetTokenKey(c *gin.Context) {
@@ -171,6 +334,7 @@ func AddToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	token.NormalizeGroup()
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
@@ -199,6 +363,15 @@ func AddToken(c *gin.Context) {
 			"success": false,
 			"message": fmt.Sprintf("已达到最大令牌数量限制 (%d)", maxTokens),
 		})
+		return
+	}
+	userGroup, err := getRequestUserGroup(c, c.GetInt("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := validateTokenGroupSelection(userGroup, token.Group); err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	key, err := common.GenerateKey()
@@ -230,6 +403,9 @@ func AddToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
+		"data": gin.H{
+			"id": cleanToken.Id,
+		},
 	})
 }
 
@@ -256,6 +432,7 @@ func UpdateToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	token.NormalizeGroup()
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
@@ -297,6 +474,15 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
+		userGroup, err := getRequestUserGroup(c, userId)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if err := validateTokenGroupSelection(userGroup, token.Group); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
 	}

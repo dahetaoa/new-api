@@ -66,12 +66,14 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	// model mapped 模型映射
-	err = helper.ModelMappedHelper(c, info, request)
-	if err != nil {
-		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+	if !relaycommon.ShouldDirectPassthrough(info) {
+		err = helper.ModelMappedHelper(c, info, request)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+		}
 	}
 
-	if model_setting.GetGeminiSettings().ThinkingAdapterEnabled {
+	if !relaycommon.ShouldDirectPassthrough(info) && model_setting.GetGeminiSettings().ThinkingAdapterEnabled {
 		if isNoThinkingRequest(request) {
 			// check is thinking
 			if !strings.Contains(info.OriginModelName, "-nothinking") {
@@ -96,7 +98,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	adaptor.Init(info)
 
-	if info.ChannelSetting.SystemPrompt != "" {
+	if info.ChannelSetting.SystemPrompt != "" && !relaycommon.ShouldDirectPassthrough(info) {
 		if request.SystemInstructions == nil {
 			request.SystemInstructions = &dto.GeminiChatContent{
 				Parts: []dto.GeminiPart{
@@ -123,7 +125,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	// Clean up empty system instruction
-	if request.SystemInstructions != nil {
+	if request.SystemInstructions != nil && !relaycommon.ShouldDirectPassthrough(info) {
 		hasContent := false
 		for _, part := range request.SystemInstructions.Parts {
 			if part.Text != "" {
@@ -137,7 +139,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	var requestBody io.Reader
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	if relaycommon.ShouldPassThroughRequestBody(info) {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())

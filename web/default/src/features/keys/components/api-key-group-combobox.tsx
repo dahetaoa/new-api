@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMemo, useState } from 'react'
-import { Check, ChevronsUpDown } from 'lucide-react'
+import { Check, ChevronsUpDown, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -43,13 +43,27 @@ export type ApiKeyGroupOption = {
   ratio?: number | string
 }
 
-type ApiKeyGroupComboboxProps = {
+type ApiKeyGroupComboboxSingleProps = {
+  mode?: 'single'
   options: ApiKeyGroupOption[]
   value?: string
   onValueChange: (value: string) => void
   placeholder?: string
   disabled?: boolean
 }
+
+type ApiKeyGroupComboboxMultiProps = {
+  mode: 'multi'
+  options: ApiKeyGroupOption[]
+  values: string[]
+  onValuesChange: (values: string[]) => void
+  placeholder?: string
+  disabled?: boolean
+}
+
+type ApiKeyGroupComboboxProps =
+  | ApiKeyGroupComboboxSingleProps
+  | ApiKeyGroupComboboxMultiProps
 
 function formatGroupRatio(
   ratio: ApiKeyGroupOption['ratio'],
@@ -95,23 +109,35 @@ function GroupRatioBadge({ ratio }: { ratio: ApiKeyGroupOption['ratio'] }) {
   )
 }
 
-export function ApiKeyGroupCombobox({
-  options,
-  value,
-  onValueChange,
-  placeholder,
-  disabled,
-}: ApiKeyGroupComboboxProps) {
+export function ApiKeyGroupCombobox(props: ApiKeyGroupComboboxProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [searchValue, setSearchValue] = useState('')
-  const selectedOption = options.find((option) => option.value === value)
+
+  const isMulti = props.mode === 'multi'
+  const multiValues = isMulti ? props.values : undefined
+  const singleValue = !isMulti ? props.value : undefined
+  const selectedValues = useMemo<string[]>(() => {
+    if (multiValues) return multiValues
+    return singleValue ? [singleValue] : []
+  }, [multiValues, singleValue])
+  const selectedSet = useMemo(() => new Set(selectedValues), [selectedValues])
+  const selectedOptions = useMemo(
+    () =>
+      selectedValues
+        .map((value) => props.options.find((option) => option.value === value))
+        .filter(
+          (option): option is ApiKeyGroupOption => option !== undefined
+        ),
+    [selectedValues, props.options]
+  )
+  const primarySelected = selectedOptions[0]
 
   const filteredOptions = useMemo(() => {
     const search = searchValue.trim().toLowerCase()
-    if (!search) return options
+    if (!search) return props.options
 
-    return options.filter((option) => {
+    return props.options.filter((option) => {
       const ratioText = String(option.ratio ?? '').toLowerCase()
       return (
         option.value.toLowerCase().includes(search) ||
@@ -120,12 +146,36 @@ export function ApiKeyGroupCombobox({
         ratioText.includes(search)
       )
     })
-  }, [options, searchValue])
+  }, [props.options, searchValue])
 
   const handleSelect = (selectedValue: string) => {
-    onValueChange(selectedValue)
-    setOpen(false)
+    if (!isMulti) {
+      props.onValueChange(selectedValue)
+      setOpen(false)
+      setSearchValue('')
+      return
+    }
+    const previous = props.values
+    const previousSet = new Set(previous)
+    let next: string[]
+    if (previousSet.has(selectedValue)) {
+      next = previous.filter((value) => value !== selectedValue)
+    } else if (selectedValue === 'auto') {
+      // 'auto' is mutually exclusive with any other group
+      next = ['auto']
+    } else if (previousSet.has('auto')) {
+      // Switching from auto to a normal group: replace auto
+      next = [selectedValue]
+    } else {
+      next = [...previous, selectedValue]
+    }
+    props.onValuesChange(next)
     setSearchValue('')
+  }
+
+  const removeValue = (value: string) => {
+    if (!isMulti) return
+    props.onValuesChange(props.values.filter((v) => v !== value))
   }
 
   return (
@@ -137,25 +187,58 @@ export function ApiKeyGroupCombobox({
             variant='outline'
             role='combobox'
             aria-expanded={open}
-            disabled={disabled}
+            disabled={props.disabled}
             className='border-input bg-muted/40 hover:bg-muted/55 hover:text-foreground active:bg-background data-popup-open:border-ring data-popup-open:bg-background data-popup-open:ring-ring/20 h-auto min-h-14 w-full justify-between gap-2 rounded-lg px-3 py-2 text-start shadow-none transition-[background-color,border-color,box-shadow] duration-150 data-popup-open:ring-[3px] sm:min-h-20 sm:gap-3 sm:px-4 sm:py-3'
           />
         }
       >
         <span className='flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3'>
-          <span className='min-w-0'>
-            <span className='block truncate font-medium'>
-              {selectedOption?.label || placeholder || t('Select a group')}
-            </span>
-            {selectedOption?.desc && (
-              <span className='text-muted-foreground block truncate text-[11px] sm:text-xs'>
-                {selectedOption.desc}
+          <span className='min-w-0 flex-1'>
+            {isMulti && selectedOptions.length > 0 ? (
+              <span className='flex flex-wrap items-center gap-1'>
+                {selectedOptions.map((option) => (
+                  <Badge
+                    key={option.value}
+                    variant='secondary'
+                    className='gap-1 pr-1'
+                  >
+                    <span className='truncate'>{option.label}</span>
+                    <span
+                      role='button'
+                      tabIndex={-1}
+                      aria-label={t('Remove')}
+                      className='hover:bg-muted-foreground/20 inline-flex size-4 items-center justify-center rounded-sm'
+                      onClick={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        removeValue(option.value)
+                      }}
+                    >
+                      <X className='h-3 w-3' />
+                    </span>
+                  </Badge>
+                ))}
               </span>
+            ) : (
+              <>
+                <span className='block truncate font-medium'>
+                  {primarySelected?.label ||
+                    props.placeholder ||
+                    t('Select a group')}
+                </span>
+                {primarySelected?.desc && (
+                  <span className='text-muted-foreground block truncate text-[11px] sm:text-xs'>
+                    {primarySelected.desc}
+                  </span>
+                )}
+              </>
             )}
           </span>
-          <span className='hidden sm:block'>
-            <GroupRatioBadge ratio={selectedOption?.ratio} />
-          </span>
+          {!isMulti && (
+            <span className='hidden sm:block'>
+              <GroupRatioBadge ratio={primarySelected?.ratio} />
+            </span>
+          )}
         </span>
         <ChevronsUpDown className='h-4 w-4 shrink-0 opacity-50' />
       </PopoverTrigger>
@@ -174,32 +257,35 @@ export function ApiKeyGroupCombobox({
           <CommandList className='max-h-[360px]'>
             <CommandEmpty>{t('No group found.')}</CommandEmpty>
             <CommandGroup>
-              {filteredOptions.map((option) => (
-                <CommandItem
-                  key={option.value}
-                  value={option.value}
-                  onSelect={() => handleSelect(option.value)}
-                  className='data-[selected=true]:bg-muted items-start gap-3 rounded-lg px-3 py-3 transition-colors'
-                >
-                  <Check
-                    className={cn(
-                      'mt-0.5 h-4 w-4',
-                      value === option.value ? 'opacity-100' : 'opacity-0'
-                    )}
-                  />
-                  <span className='min-w-0 flex-1'>
-                    <span className='block truncate font-medium'>
-                      {option.label}
-                    </span>
-                    {option.desc && (
-                      <span className='text-muted-foreground block truncate text-xs'>
-                        {option.desc}
+              {filteredOptions.map((option) => {
+                const checked = selectedSet.has(option.value)
+                return (
+                  <CommandItem
+                    key={option.value}
+                    value={option.value}
+                    onSelect={() => handleSelect(option.value)}
+                    className='data-[selected=true]:bg-muted items-start gap-3 rounded-lg px-3 py-3 transition-colors'
+                  >
+                    <Check
+                      className={cn(
+                        'mt-0.5 h-4 w-4',
+                        checked ? 'opacity-100' : 'opacity-0'
+                      )}
+                    />
+                    <span className='min-w-0 flex-1'>
+                      <span className='block truncate font-medium'>
+                        {option.label}
                       </span>
-                    )}
-                  </span>
-                  <GroupRatioBadge ratio={option.ratio} />
-                </CommandItem>
-              ))}
+                      {option.desc && (
+                        <span className='text-muted-foreground block truncate text-xs'>
+                          {option.desc}
+                        </span>
+                      )}
+                    </span>
+                    <GroupRatioBadge ratio={option.ratio} />
+                  </CommandItem>
+                )
+              })}
             </CommandGroup>
           </CommandList>
         </Command>

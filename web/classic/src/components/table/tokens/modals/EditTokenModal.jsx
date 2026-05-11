@@ -59,12 +59,40 @@ import { StatusContext } from '../../../../context/Status';
 
 const { Text, Title } = Typography;
 
+const normalizeGroupValue = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((group) => String(group).trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((group) => group.trim())
+      .filter(Boolean);
+  }
+  return [];
+};
+
+const normalizeSelectedGroups = (value, previousValue = []) => {
+  const selectedGroups = normalizeGroupValue(value);
+  const previousGroups = normalizeGroupValue(previousValue);
+  const uniqueGroups = [...new Set(selectedGroups)];
+
+  if (uniqueGroups.includes('auto') && uniqueGroups.length > 1) {
+    return previousGroups.includes('auto')
+      ? uniqueGroups.filter((group) => group !== 'auto')
+      : ['auto'];
+  }
+
+  return uniqueGroups;
+};
+
 const EditTokenModal = (props) => {
   const { t } = useTranslation();
   const [statusState, statusDispatch] = useContext(StatusContext);
   const [loading, setLoading] = useState(false);
   const isMobile = useIsMobile();
   const formApiRef = useRef(null);
+  const selectedGroupsRef = useRef([]);
   const [models, setModels] = useState([]);
   const [groups, setGroups] = useState([]);
   const [showQuotaInput, setShowQuotaInput] = useState(false);
@@ -79,7 +107,7 @@ const EditTokenModal = (props) => {
     model_limits_enabled: false,
     model_limits: [],
     allow_ips: '',
-    group: '',
+    group: [],
     cross_group_retry: false,
     tokenCount: 1,
   });
@@ -169,6 +197,8 @@ const EditTokenModal = (props) => {
       } else {
         data.model_limits = [];
       }
+      data.group = normalizeSelectedGroups(data.group);
+      selectedGroupsRef.current = data.group;
       data.remain_amount = Number(
         quotaToDisplayAmount(data.remain_quota || 0).toFixed(6),
       );
@@ -184,6 +214,7 @@ const EditTokenModal = (props) => {
   useEffect(() => {
     if (formApiRef.current) {
       if (!isEdit) {
+        selectedGroupsRef.current = [];
         formApiRef.current.setValues(getInitValues());
       }
     }
@@ -196,9 +227,11 @@ const EditTokenModal = (props) => {
       if (isEdit) {
         loadToken();
       } else {
+        selectedGroupsRef.current = [];
         formApiRef.current?.setValues(getInitValues());
       }
     } else {
+      selectedGroupsRef.current = [];
       formApiRef.current?.reset();
     }
   }, [props.visiable, props.editingToken.id]);
@@ -215,10 +248,32 @@ const EditTokenModal = (props) => {
     return result;
   };
 
+  const serializeGroupValue = (value) =>
+    normalizeSelectedGroups(value).join(',');
+
+  const prepareTokenInputs = (inputs) => {
+    const localInputs = { ...inputs };
+    localInputs.group = serializeGroupValue(localInputs.group);
+    if (localInputs.group !== 'auto') {
+      localInputs.cross_group_retry = false;
+    }
+    return localInputs;
+  };
+
+  const handleGroupChange = (value) => {
+    const previousValue = selectedGroupsRef.current;
+    const nextValue = normalizeSelectedGroups(value, previousValue);
+    selectedGroupsRef.current = nextValue;
+    formApiRef.current?.setValue('group', nextValue);
+    if (!nextValue.includes('auto')) {
+      formApiRef.current?.setValue('cross_group_retry', false);
+    }
+  };
+
   const submit = async (values) => {
     setLoading(true);
     if (isEdit) {
-      let { tokenCount: _tc, ...localInputs } = values;
+      let { tokenCount: _tc, ...localInputs } = prepareTokenInputs(values);
       localInputs.remain_quota = localInputs.unlimited_quota
         ? 0
         : displayAmountToQuota(localInputs.remain_amount);
@@ -254,7 +309,7 @@ const EditTokenModal = (props) => {
       const count = parseInt(values.tokenCount, 10) || 1;
       let successCount = 0;
       for (let i = 0; i < count; i++) {
-        let { tokenCount: _tc, ...localInputs } = values;
+        let { tokenCount: _tc, ...localInputs } = prepareTokenInputs(values);
         const baseName =
           values.name.trim() === '' ? 'default' : values.name.trim();
         if (i !== 0 || values.name.trim() === '') {
@@ -298,6 +353,7 @@ const EditTokenModal = (props) => {
       }
     }
     setLoading(false);
+    selectedGroupsRef.current = [];
     formApiRef.current?.setValues(getInitValues());
   };
 
@@ -387,7 +443,10 @@ const EditTokenModal = (props) => {
                       <Form.Select
                         field='group'
                         label={t('令牌分组')}
-                        placeholder={t('令牌分组，默认为用户的分组')}
+                        placeholder={t(
+                          '令牌分组，可多选，留空默认为用户的分组',
+                        )}
+                        multiple
                         optionList={groups}
                         renderOptionItem={renderGroupOption}
                         filter={(input, option) => {
@@ -398,6 +457,9 @@ const EditTokenModal = (props) => {
                               option.label.toLowerCase().includes(q))
                           );
                         }}
+                        onChange={handleGroupChange}
+                        autoClearSearchValue={false}
+                        searchPosition='dropdown'
                         showClear
                         style={{ width: '100%' }}
                       />
@@ -413,7 +475,11 @@ const EditTokenModal = (props) => {
                   <Col
                     span={24}
                     style={{
-                      display: values.group === 'auto' ? 'block' : 'none',
+                      display: normalizeGroupValue(values.group).includes(
+                        'auto',
+                      )
+                        ? 'block'
+                        : 'none',
                     }}
                   >
                     <Form.Switch
@@ -552,7 +618,10 @@ const EditTokenModal = (props) => {
                         ? `▾ ${t('收起原生额度输入')}`
                         : `▸ ${t('使用原生额度输入')}`}
                     </div>
-                    <div style={{ display: showQuotaInput ? 'block' : 'none' }} className='mt-2'>
+                    <div
+                      style={{ display: showQuotaInput ? 'block' : 'none' }}
+                      className='mt-2'
+                    >
                       <Form.InputNumber
                         field='remain_quota'
                         label={t('额度')}

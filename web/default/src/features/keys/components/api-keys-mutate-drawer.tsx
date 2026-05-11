@@ -49,6 +49,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Sheet,
   SheetClose,
@@ -62,7 +63,12 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { DateTimePicker } from '@/components/datetime-picker'
 import { MultiSelect } from '@/components/multi-select'
-import { createApiKey, updateApiKey, getApiKey } from '../api'
+import {
+  createApiKey,
+  updateApiKey,
+  getApiKey,
+  updateTokenRateLimits,
+} from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   apiKeyFormSchema,
@@ -87,28 +93,28 @@ type ApiKeyMutateDrawerProps = {
 
 type ApiKeyFormSectionProps = {
   title: string
-  description: string
   icon: LucideIcon
   children: ReactNode
+  className?: string
 }
 
 function ApiKeyFormSection(props: ApiKeyFormSectionProps) {
   const Icon = props.icon
 
   return (
-    <section className='bg-card rounded-lg border'>
-      <div className='flex items-center gap-2.5 border-b px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3'>
-        <div className='bg-muted text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-lg border sm:size-10'>
-          <Icon className='size-4 sm:size-5' />
-        </div>
-        <div className='min-w-0'>
-          <h3 className='text-sm leading-none font-medium'>{props.title}</h3>
-          <p className='text-muted-foreground mt-0.5 text-xs sm:mt-1'>
-            {props.description}
-          </p>
-        </div>
+    <section
+      className={cn(
+        'space-y-3 pb-4 sm:space-y-4 sm:pb-5 border-b last:border-b-0 last:pb-0',
+        props.className
+      )}
+    >
+      <div className='flex items-center gap-2.5'>
+        <span className='bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-lg'>
+          <Icon className='size-4' />
+        </span>
+        <h3 className='text-sm font-semibold tracking-tight'>{props.title}</h3>
       </div>
-      <div className='space-y-3 p-3 sm:space-y-4 sm:p-4'>{props.children}</div>
+      {props.children}
     </section>
   )
 }
@@ -201,7 +207,12 @@ export function ApiKeysMutateDrawer({
       } else {
         // Create mode - handle batch creation
         const count = data.tokenCount || 1
+        const rpm = Math.max(0, Number(data.rate_limit_rpm) || 0)
+        const rph = Math.max(0, Number(data.rate_limit_rph) || 0)
+        const rpd = Math.max(0, Number(data.rate_limit_rpd) || 0)
+        const hasRateLimit = rpm > 0 || rph > 0 || rpd > 0
         let successCount = 0
+        let rateLimitFailures = 0
 
         for (let i = 0; i < count; i++) {
           const result = await createApiKey({
@@ -213,10 +224,28 @@ export function ApiKeysMutateDrawer({
           })
           if (result.success) {
             successCount++
+            if (hasRateLimit && result.data?.id) {
+              const rlRes = await updateTokenRateLimits(result.data.id, {
+                total: { rpm, rph, rpd },
+                models: [],
+              })
+              if (!rlRes.success) {
+                rateLimitFailures++
+              }
+            }
           } else {
             toast.error(result.message || t(ERROR_MESSAGES.CREATE_FAILED))
             break
           }
+        }
+
+        if (rateLimitFailures > 0) {
+          toast.warning(
+            t(
+              'Key created but rate limit not applied for {{count}} key(s).',
+              { count: rateLimitFailures }
+            )
+          )
         }
 
         if (successCount > 0) {
@@ -293,7 +322,6 @@ export function ApiKeysMutateDrawer({
           >
             <ApiKeyFormSection
               title={t('Basic Information')}
-              description={t('Set API key basic information')}
               icon={KeyRound}
             >
               <FormField
@@ -318,10 +346,18 @@ export function ApiKeysMutateDrawer({
                     <FormLabel>{t('Group')}</FormLabel>
                     <FormControl>
                       <ApiKeyGroupCombobox
+                        mode='multi'
                         options={groups}
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        placeholder={t('Select a group')}
+                        values={Array.isArray(field.value) ? field.value : []}
+                        onValuesChange={(next) => {
+                          field.onChange(next)
+                          if (!next.includes('auto')) {
+                            form.setValue('cross_group_retry', false)
+                          }
+                        }}
+                        placeholder={t(
+                          'Select one or more groups, leave empty to use the user default group'
+                        )}
                       />
                     </FormControl>
                     <FormMessage />
@@ -329,7 +365,7 @@ export function ApiKeysMutateDrawer({
                 )}
               />
 
-              {selectedGroup === 'auto' && (
+              {Array.isArray(selectedGroup) && selectedGroup.includes('auto') && (
                 <FormField
                   control={form.control}
                   name='cross_group_retry'
@@ -447,7 +483,6 @@ export function ApiKeysMutateDrawer({
 
             <ApiKeyFormSection
               title={t('Quota Settings')}
-              description={t('Set quota amount and limits')}
               icon={WalletCards}
             >
               {!unlimitedQuota && (
@@ -506,26 +541,21 @@ export function ApiKeysMutateDrawer({
             </ApiKeyFormSection>
 
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              <section className='bg-card rounded-lg border'>
+              <section className='space-y-3 sm:space-y-4 last:pb-0'>
                 <CollapsibleTrigger
                   render={
                     <button
                       type='button'
-                      className='hover:bg-muted/50 flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors sm:gap-3 sm:px-4 sm:py-3'
+                      className='-mx-1 flex w-[calc(100%+0.5rem)] items-center gap-2.5 rounded-md px-1 py-1 text-left transition-colors hover:bg-muted/40'
                     />
                   }
                 >
-                  <div className='bg-muted text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-lg border sm:size-10'>
-                    <Settings2 className='size-4 sm:size-5' />
-                  </div>
-                  <div className='min-w-0 flex-1'>
-                    <h3 className='text-sm leading-none font-medium'>
-                      {t('Advanced Settings')}
-                    </h3>
-                    <p className='text-muted-foreground mt-1 text-xs'>
-                      {t('Set API key access restrictions')}
-                    </p>
-                  </div>
+                  <span className='bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-lg'>
+                    <Settings2 className='size-4' />
+                  </span>
+                  <h3 className='flex-1 text-sm font-semibold tracking-tight'>
+                    {t('Advanced Settings')}
+                  </h3>
                   <ChevronDown
                     className={cn(
                       'text-muted-foreground size-4 shrink-0 transition-transform',
@@ -534,7 +564,7 @@ export function ApiKeysMutateDrawer({
                   />
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <div className='space-y-3 border-t p-3 sm:space-y-4 sm:p-4'>
+                  <div className='space-y-3 sm:space-y-4'>
                     <FormField
                       control={form.control}
                       name='model_limits'
@@ -589,6 +619,75 @@ export function ApiKeysMutateDrawer({
                         </FormItem>
                       )}
                     />
+
+                    {!isUpdate && (
+                      <FormItem>
+                        <FormLabel>{t('Rate Limit')}</FormLabel>
+                        <div className='grid grid-cols-1 gap-2 sm:grid-cols-3'>
+                          {(
+                            [
+                              {
+                                key: 'rate_limit_rpm',
+                                label: 'RPM',
+                                placeholder: t('Per minute'),
+                              },
+                              {
+                                key: 'rate_limit_rph',
+                                label: 'RPH',
+                                placeholder: t('Per hour'),
+                              },
+                              {
+                                key: 'rate_limit_rpd',
+                                label: 'RPD',
+                                placeholder: t('Per day'),
+                              },
+                            ] as const
+                          ).map((entry) => (
+                            <FormField
+                              key={entry.key}
+                              control={form.control}
+                              name={entry.key}
+                              render={({ field }) => (
+                                <div className='space-y-1'>
+                                  <Label
+                                    htmlFor={`create-${entry.key}`}
+                                    className='text-muted-foreground text-xs font-medium'
+                                  >
+                                    {entry.label}
+                                  </Label>
+                                  <FormControl>
+                                    <Input
+                                      id={`create-${entry.key}`}
+                                      type='number'
+                                      min={0}
+                                      step={1}
+                                      placeholder={entry.placeholder}
+                                      value={field.value ?? 0}
+                                      onChange={(e) => {
+                                        const parsed = parseInt(
+                                          e.target.value,
+                                          10
+                                        )
+                                        field.onChange(
+                                          Number.isFinite(parsed) && parsed > 0
+                                            ? parsed
+                                            : 0
+                                        )
+                                      }}
+                                    />
+                                  </FormControl>
+                                </div>
+                              )}
+                            />
+                          ))}
+                        </div>
+                        <FormDescription>
+                          {t(
+                            '0 means unlimited; applies to all models. Per-model limits can be configured later in Rate Limit Management.'
+                          )}
+                        </FormDescription>
+                      </FormItem>
+                    )}
                   </div>
                 </CollapsibleContent>
               </section>

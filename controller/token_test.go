@@ -14,6 +14,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
@@ -48,21 +50,21 @@ type sqliteColumnInfo struct {
 }
 
 type legacyToken struct {
-	Id                 int            `gorm:"primaryKey"`
-	UserId             int            `gorm:"index"`
-	Key                string         `gorm:"column:key;type:char(48);uniqueIndex"`
-	Status             int            `gorm:"default:1"`
-	Name               string         `gorm:"index"`
-	CreatedTime        int64          `gorm:"bigint"`
-	AccessedTime       int64          `gorm:"bigint"`
-	ExpiredTime        int64          `gorm:"bigint;default:-1"`
-	RemainQuota        int            `gorm:"default:0"`
+	Id                 int    `gorm:"primaryKey"`
+	UserId             int    `gorm:"index"`
+	Key                string `gorm:"column:key;type:char(48);uniqueIndex"`
+	Status             int    `gorm:"default:1"`
+	Name               string `gorm:"index"`
+	CreatedTime        int64  `gorm:"bigint"`
+	AccessedTime       int64  `gorm:"bigint"`
+	ExpiredTime        int64  `gorm:"bigint;default:-1"`
+	RemainQuota        int    `gorm:"default:0"`
 	UnlimitedQuota     bool
 	ModelLimitsEnabled bool
-	ModelLimits        string         `gorm:"type:text"`
-	AllowIps           *string        `gorm:"default:''"`
-	UsedQuota          int            `gorm:"default:0"`
-	Group              string         `gorm:"column:group;default:''"`
+	ModelLimits        string  `gorm:"type:text"`
+	AllowIps           *string `gorm:"default:''"`
+	UsedQuota          int     `gorm:"default:0"`
+	Group              string  `gorm:"column:group;default:''"`
 	CrossGroupRetry    bool
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
@@ -203,6 +205,7 @@ func newAuthenticatedContext(t *testing.T, method string, target string, body an
 		ctx.Request.Header.Set("Content-Type", "application/json")
 	}
 	ctx.Set("id", userID)
+	ctx.Set("user_group", "default")
 	return ctx, recorder
 }
 
@@ -274,6 +277,39 @@ func getTokenKeyColumnType(t *testing.T, db *gorm.DB, dialect string) string {
 	}
 }
 
+func getTokenGroupColumnType(t *testing.T, db *gorm.DB, dialect string) string {
+	t.Helper()
+
+	switch dialect {
+	case "sqlite":
+		return getSQLiteColumnType(t, db, "tokens", "group")
+	case "mysql":
+		var columnType string
+		if err := db.Raw(`SELECT COLUMN_TYPE FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+			"tokens", "group").Scan(&columnType).Error; err != nil {
+			t.Fatalf("failed to inspect mysql token group column: %v", err)
+		}
+		return strings.ToLower(columnType)
+	case "postgres":
+		var dataType string
+		var maxLength sql.NullInt64
+		if err := db.Raw(`SELECT data_type, character_maximum_length
+			FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
+			"tokens", "group").Row().Scan(&dataType, &maxLength); err != nil {
+			t.Fatalf("failed to inspect postgres token group column: %v", err)
+		}
+		if strings.EqualFold(dataType, "character varying") && maxLength.Valid {
+			return fmt.Sprintf("varchar(%d)", maxLength.Int64)
+		}
+		return strings.ToLower(dataType)
+	default:
+		t.Fatalf("unsupported dialect %q", dialect)
+		return ""
+	}
+}
+
 func runTokenMigrationCompatibilityTest(t *testing.T, db *gorm.DB, dialect string, managedTokensTable *bool) {
 	t.Helper()
 
@@ -314,6 +350,9 @@ func runTokenMigrationCompatibilityTest(t *testing.T, db *gorm.DB, dialect strin
 
 	if got := getTokenKeyColumnType(t, db, dialect); got != "varchar(128)" {
 		t.Fatalf("expected migrated key column type varchar(128), got %q", got)
+	}
+	if got := getTokenGroupColumnType(t, db, dialect); dialect != "sqlite" && got != "varchar(1024)" {
+		t.Fatalf("expected migrated group column type varchar(1024), got %q", got)
 	}
 
 	var migratedToken model.Token
@@ -503,6 +542,76 @@ func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), token.Key) {
 		t.Fatalf("update response leaked raw token key: %s", recorder.Body.String())
+	}
+}
+
+func TestUpdateTokenAllowsMultipleGroups(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	if err := ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1}`); err != nil {
+		t.Fatalf("failed to set group ratio: %v", err)
+	}
+	if err := setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"vip分组"}`); err != nil {
+		t.Fatalf("failed to set user usable groups: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"svip":1}`)
+		_ = setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"vip分组"}`)
+	})
+	token := seedToken(t, db, 1, "multi-group-token", "multi1234group5678")
+
+	body := map[string]any{
+		"id":                   token.Id,
+		"name":                 "multi-group-token",
+		"expired_time":         -1,
+		"remain_quota":         100,
+		"unlimited_quota":      true,
+		"model_limits_enabled": false,
+		"model_limits":         "",
+		"group":                " default, vip,default ",
+		"cross_group_retry":    true,
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
+	UpdateToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected update success, got message: %s", response.Message)
+	}
+	var updated model.Token
+	if err := db.First(&updated, "id = ?", token.Id).Error; err != nil {
+		t.Fatalf("failed to fetch updated token: %v", err)
+	}
+	if updated.Group != "default,vip" {
+		t.Fatalf("expected normalized multi group, got %q", updated.Group)
+	}
+	if updated.CrossGroupRetry {
+		t.Fatalf("expected cross_group_retry to be disabled for non-auto multi group")
+	}
+}
+
+func TestUpdateTokenRejectsAutoMixedWithGroups(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "bad-group-token", "badg1234token5678")
+
+	body := map[string]any{
+		"id":                   token.Id,
+		"name":                 "bad-group-token",
+		"expired_time":         -1,
+		"remain_quota":         100,
+		"unlimited_quota":      true,
+		"model_limits_enabled": false,
+		"model_limits":         "",
+		"group":                "default,auto",
+		"cross_group_retry":    true,
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
+	UpdateToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if response.Success {
+		t.Fatalf("expected mixed auto group update to fail")
 	}
 }
 

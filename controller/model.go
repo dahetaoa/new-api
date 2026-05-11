@@ -3,6 +3,8 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -161,13 +163,9 @@ func ListModels(c *gin.Context, modelType int) {
 			})
 			return
 		}
-		group := userGroup
 		tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
-		if tokenGroup != "" {
-			group = tokenGroup
-		}
 		var models []string
-		if tokenGroup == "auto" {
+		if model.IsAutoTokenGroup(tokenGroup) {
 			for _, autoGroup := range service.GetUserAutoGroup(userGroup) {
 				groupModels := model.GetGroupEnabledModels(autoGroup)
 				for _, g := range groupModels {
@@ -177,7 +175,15 @@ func ListModels(c *gin.Context, modelType int) {
 				}
 			}
 		} else {
-			models = model.GetGroupEnabledModels(group)
+			groups := model.GetEffectiveTokenGroups(tokenGroup, userGroup)
+			for _, group := range groups {
+				groupModels := model.GetGroupEnabledModels(group)
+				for _, g := range groupModels {
+					if !common.StringsContains(models, g) {
+						models = append(models, g)
+					}
+				}
+			}
 		}
 		for _, modelName := range models {
 			if !acceptUnsetRatioModel {
@@ -220,15 +226,24 @@ func ListModels(c *gin.Context, modelType int) {
 	case constant.ChannelTypeGemini:
 		userGeminiModels := make([]dto.GeminiModel, len(userOpenAiModels))
 		for i, model := range userOpenAiModels {
-			userGeminiModels[i] = dto.GeminiModel{
-				Name:        model.Id,
-				DisplayName: model.Id,
-			}
+			userGeminiModels[i] = toGeminiModel(model)
 		}
-		c.JSON(200, gin.H{
-			"models":        userGeminiModels,
-			"nextPageToken": nil,
-		})
+		pageSize, pageToken := parseGeminiModelsPagination(c)
+		start := pageToken
+		if start > len(userGeminiModels) {
+			start = len(userGeminiModels)
+		}
+		end := len(userGeminiModels)
+		if pageSize > 0 && start+pageSize < end {
+			end = start + pageSize
+		}
+		response := gin.H{
+			"models": userGeminiModels[start:end],
+		}
+		if end < len(userGeminiModels) {
+			response["nextPageToken"] = strconv.Itoa(end)
+		}
+		c.JSON(200, response)
 	default:
 		c.JSON(200, gin.H{
 			"success": true,
@@ -270,6 +285,9 @@ func RetrieveModel(c *gin.Context, modelType int) {
 				DisplayName: aiModel.Id,
 				Type:        "model",
 			})
+		case constant.ChannelTypeGemini:
+			aiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(aiModel.Id)
+			c.JSON(200, toGeminiModel(aiModel))
 		default:
 			c.JSON(200, aiModel)
 		}
@@ -284,4 +302,61 @@ func RetrieveModel(c *gin.Context, modelType int) {
 			"error": openAIError,
 		})
 	}
+}
+
+func toGeminiModel(aiModel dto.OpenAIModels) dto.GeminiModel {
+	supportedMethods := getGeminiSupportedGenerationMethods(aiModel.SupportedEndpointTypes)
+	return dto.GeminiModel{
+		Name:                       geminiModelResourceName(aiModel.Id),
+		BaseModelId:                aiModel.Id,
+		DisplayName:                aiModel.Id,
+		Description:                fmt.Sprintf("new-api proxy model: %s", aiModel.Id),
+		SupportedGenerationMethods: supportedMethods,
+	}
+}
+
+func geminiModelResourceName(modelID string) string {
+	if strings.HasPrefix(modelID, "models/") {
+		return modelID
+	}
+	return "models/" + modelID
+}
+
+func getGeminiSupportedGenerationMethods(endpointTypes []constant.EndpointType) []string {
+	if len(endpointTypes) == 0 {
+		return []string{"generateContent"}
+	}
+	methods := make([]string, 0, 2)
+	for _, endpointType := range endpointTypes {
+		switch endpointType {
+		case constant.EndpointTypeEmbeddings:
+			methods = append(methods, "embedContent")
+		case constant.EndpointTypeGemini,
+			constant.EndpointTypeOpenAI,
+			constant.EndpointTypeOpenAIResponse,
+			constant.EndpointTypeOpenAIResponseCompact,
+			constant.EndpointTypeAnthropic,
+			constant.EndpointTypeImageGeneration:
+			methods = append(methods, "generateContent")
+		}
+	}
+	methods = lo.Uniq(methods)
+	if len(methods) == 0 {
+		return []string{"generateContent"}
+	}
+	return methods
+}
+
+func parseGeminiModelsPagination(c *gin.Context) (pageSize int, pageToken int) {
+	if rawPageSize := strings.TrimSpace(c.Query("pageSize")); rawPageSize != "" {
+		if v, err := strconv.Atoi(rawPageSize); err == nil && v > 0 {
+			pageSize = v
+		}
+	}
+	if rawPageToken := strings.TrimSpace(c.Query("pageToken")); rawPageToken != "" {
+		if v, err := strconv.Atoi(rawPageToken); err == nil && v >= 0 {
+			pageToken = v
+		}
+	}
+	return pageSize, pageToken
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
+	"github.com/QuantumNous/new-api/relay/channel/globalpassthrough"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	"github.com/QuantumNous/new-api/service"
 
@@ -293,6 +294,8 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 	switch channel.Type {
 	case constant.ChannelTypeAli:
 		url = fmt.Sprintf("%s/compatible-mode/v1/models", baseURL)
+	case constant.ChannelTypeGlobalPassthrough:
+		url = fmt.Sprintf("%s%s", baseURL, globalpassthrough.ResolveModelsPath(channel.GetSetting()))
 	case constant.ChannelTypeZhipu_v4:
 		if plan, ok := constant.ChannelSpecialBases[baseURL]; ok && plan.OpenAIBaseURL != "" {
 			url = fmt.Sprintf("%s/models", plan.OpenAIBaseURL)

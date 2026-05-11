@@ -89,7 +89,8 @@ const renderStatus = (text, record, t) => {
 
 // Render group column
 const renderGroupColumn = (text, record, t, groupRatios = {}) => {
-  if (text === 'auto') {
+  const groupText = typeof text === 'string' ? text.trim() : '';
+  if (groupText === 'auto') {
     return (
       <Tooltip
         content={t(
@@ -104,15 +105,28 @@ const renderGroupColumn = (text, record, t, groupRatios = {}) => {
       </Tooltip>
     );
   }
-  const ratio = groupRatios[text];
+
+  const groups = groupText
+    .split(',')
+    .map((group) => group.trim())
+    .filter(Boolean);
+  const displayGroups = groups.length > 0 ? groups : [''];
+
   return (
-    <span className='flex items-center gap-1'>
-      {renderGroup(text)}
-      {ratio !== undefined && (
-        <Tag size='small' color='green' shape='circle'>
-          {ratio}x
-        </Tag>
-      )}
+    <span className='flex flex-wrap items-center gap-1'>
+      {displayGroups.map((group) => {
+        const ratio = groupRatios[group];
+        return (
+          <span key={group || 'default'} className='flex items-center gap-1'>
+            {renderGroup(group)}
+            {ratio !== undefined && (
+              <Tag size='small' color='green' shape='circle'>
+                {ratio}x
+              </Tag>
+            )}
+          </span>
+        );
+      })}
     </span>
   );
 };
@@ -357,6 +371,7 @@ const renderOperations = (
   setShowEdit,
   manageToken,
   refresh,
+  openRateLimitModal,
   t,
 ) => {
   let chatsArray = [];
@@ -445,6 +460,14 @@ const renderOperations = (
       </Button>
 
       <Button
+        type='tertiary'
+        size='small'
+        onClick={() => openRateLimitModal?.(record)}
+      >
+        {t('限速')}
+      </Button>
+
+      <Button
         type='danger'
         size='small'
         onClick={() => {
@@ -480,6 +503,7 @@ export const getTokensColumns = ({
   setShowEdit,
   refresh,
   groupRatios = {},
+  openRateLimitModal,
 }) => {
   return [
     {
@@ -567,6 +591,7 @@ export const getTokensColumns = ({
           setShowEdit,
           manageToken,
           refresh,
+          openRateLimitModal,
           t,
         ),
     },

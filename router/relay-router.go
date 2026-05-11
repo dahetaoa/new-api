@@ -25,7 +25,7 @@ func SetRelayRouter(router *gin.Engine) {
 			case c.GetHeader("x-api-key") != "" && c.GetHeader("anthropic-version") != "":
 				controller.ListModels(c, constant.ChannelTypeAnthropic)
 			case c.GetHeader("x-goog-api-key") != "" || c.Query("key") != "": // 单独的适配
-				controller.RetrieveModel(c, constant.ChannelTypeGemini)
+				controller.ListModels(c, constant.ChannelTypeGemini)
 			default:
 				controller.ListModels(c, constant.ChannelTypeOpenAI)
 			}
@@ -47,6 +47,9 @@ func SetRelayRouter(router *gin.Engine) {
 	{
 		geminiRouter.GET("", func(c *gin.Context) {
 			controller.ListModels(c, constant.ChannelTypeGemini)
+		})
+		geminiRouter.GET("/:model", func(c *gin.Context) {
+			controller.RetrieveModel(c, constant.ChannelTypeGemini)
 		})
 	}
 
@@ -70,11 +73,10 @@ func SetRelayRouter(router *gin.Engine) {
 	relayV1Router.Use(middleware.RouteTag("relay"))
 	relayV1Router.Use(middleware.SystemPerformanceCheck())
 	relayV1Router.Use(middleware.TokenAuth())
-	relayV1Router.Use(middleware.ModelRequestRateLimit())
 	{
 		// WebSocket 路由（统一到 Relay）
 		wsRouter := relayV1Router.Group("")
-		wsRouter.Use(middleware.Distribute())
+		wsRouter.Use(middleware.Distribute(), middleware.ModelRequestRateLimit())
 		wsRouter.GET("/realtime", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIRealtime)
 		})
@@ -82,7 +84,7 @@ func SetRelayRouter(router *gin.Engine) {
 	{
 		//http router
 		httpRouter := relayV1Router.Group("")
-		httpRouter.Use(middleware.Distribute())
+		httpRouter.Use(middleware.Distribute(), middleware.ModelRequestRateLimit())
 
 		// claude related routes
 		httpRouter.POST("/messages", func(c *gin.Context) {
@@ -190,8 +192,7 @@ func SetRelayRouter(router *gin.Engine) {
 	relayGeminiRouter.Use(middleware.RouteTag("relay"))
 	relayGeminiRouter.Use(middleware.SystemPerformanceCheck())
 	relayGeminiRouter.Use(middleware.TokenAuth())
-	relayGeminiRouter.Use(middleware.ModelRequestRateLimit())
-	relayGeminiRouter.Use(middleware.Distribute())
+	relayGeminiRouter.Use(middleware.Distribute(), middleware.ModelRequestRateLimit())
 	{
 		// Gemini API 路径格式: /v1beta/models/{model_name}:{action}
 		relayGeminiRouter.POST("/models/*path", func(c *gin.Context) {

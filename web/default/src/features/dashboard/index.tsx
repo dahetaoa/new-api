@@ -269,7 +269,7 @@ export function Dashboard() {
               </FadeIn>
               <FadeIn delay={0.1}>
                 <Suspense fallback={<PerformanceOverviewFallback />}>
-                  <LazyPerformanceOverview />
+                  <LazyPerformanceOverview filters={modelFilters} />
                 </Suspense>
               </FadeIn>
               <FadeIn delay={0.15}>

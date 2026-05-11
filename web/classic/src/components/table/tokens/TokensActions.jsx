@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useState } from 'react';
-import { Button, Space } from '@douyinfe/semi-ui';
+import { Button } from '@douyinfe/semi-ui';
 import { showError } from '../../../helpers';
 import CopyTokensModal from './modals/CopyTokensModal';
 import DeleteTokensModal from './modals/DeleteTokensModal';
@@ -29,6 +29,7 @@ const TokensActions = ({
   setShowEdit,
   batchCopyTokens,
   batchDeleteTokens,
+  openRateLimitModal,
   t,
 }) => {
   // Modal states
@@ -51,6 +52,14 @@ const TokensActions = ({
       return;
     }
     setShowDeleteModal(true);
+  };
+
+  const handleOpenRateLimit = () => {
+    if (selectedKeys.length !== 1) {
+      showError(t('请选择一个令牌进行限速管理'));
+      return;
+    }
+    openRateLimitModal?.(selectedKeys[0]);
   };
 
   // Handle delete confirmation
@@ -83,6 +92,15 @@ const TokensActions = ({
           size='small'
         >
           {t('复制所选令牌')}
+        </Button>
+
+        <Button
+          type='tertiary'
+          className='flex-1 md:flex-initial'
+          onClick={handleOpenRateLimit}
+          size='small'
+        >
+          {t('限速管理')}
         </Button>
 
         <Button
