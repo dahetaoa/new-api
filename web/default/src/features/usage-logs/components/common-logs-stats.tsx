@@ -16,10 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-import { formatLogQuota } from '@/lib/format'
+import { formatLogQuota, formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useIsAdmin } from '@/hooks/use-admin'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -51,14 +52,20 @@ export function CommonLogsStats() {
   const isAdmin = useIsAdmin()
   const searchParams = route.useSearch()
   const { sensitiveVisible } = useUsageLogsContext()
+  const statsSearchParams = useMemo(() => {
+    const params: Record<string, unknown> = { ...searchParams }
+    delete params.page
+    delete params.pageSize
+    return params
+  }, [searchParams])
 
   const { data: stats, isLoading } = useQuery({
-    queryKey: ['usage-logs-stats', isAdmin, searchParams],
+    queryKey: ['usage-logs-stats', isAdmin, statsSearchParams],
     queryFn: async () => {
       const params = buildApiParams({
         page: 1,
         pageSize: 1,
-        searchParams,
+        searchParams: statsSearchParams,
         columnFilters: [],
         isAdmin,
       })
@@ -80,26 +87,44 @@ export function CommonLogsStats() {
         <Skeleton className='h-7 w-[150px] rounded-md' />
         <Skeleton className='h-7 w-[100px] rounded-md' />
         <Skeleton className='h-7 w-[120px] rounded-md' />
+        <Skeleton className='h-7 w-[150px] rounded-md' />
+        <Skeleton className='h-7 w-[160px] rounded-md' />
       </div>
     )
   }
+
+  const safeStats = { ...DEFAULT_LOG_STATS, ...stats }
 
   return (
     <div className='flex flex-wrap items-center gap-2'>
       <StatBadge
         label={t('Usage')}
-        value={sensitiveVisible ? formatLogQuota(stats?.quota || 0) : '••••'}
+        value={sensitiveVisible ? formatLogQuota(safeStats.quota) : '••••'}
         accent='bg-sky-500/70'
       />
       <StatBadge
         label={t('RPM')}
-        value={stats?.rpm || 0}
+        value={safeStats.rpm}
         accent='bg-rose-500/65'
       />
       <StatBadge
         label={t('TPM')}
-        value={stats?.tpm || 0}
+        value={safeStats.tpm}
         accent='bg-slate-400/70'
+      />
+      <StatBadge
+        label={t('Input Token')}
+        value={
+          sensitiveVisible ? formatNumber(safeStats.prompt_tokens) : '••••'
+        }
+        accent='bg-emerald-500/70'
+      />
+      <StatBadge
+        label={t('Output Token')}
+        value={
+          sensitiveVisible ? formatNumber(safeStats.completion_tokens) : '••••'
+        }
+        accent='bg-amber-500/75'
       />
     </div>
   )

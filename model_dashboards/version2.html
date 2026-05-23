@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model Latency Dashboard - V2 (Modern Light)</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts/dist/echarts.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #f4f7fb;
+            --card-bg: #ffffff;
+            --text-main: #2c3e50;
+            --text-muted: #7f8c8d;
+            --border-color: #e2e8f0;
+            --primary: #3b82f6;
+            --danger: #ef4444;
+            --success: #10b981;
+            --chart-tps: #3b82f6;
+            --chart-ttft: #8b5cf6;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-main);
+            padding: 30px 20px;
+            margin: 0;
+            line-height: 1.5;
+        }
+
+        .dashboard { max-width: 1000px; margin: 0 auto; }
+
+        .header-top {
+            display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;
+        }
+
+        h2 { margin: 0; font-size: 24px; font-weight: 700; color: #1e293b; }
+
+        .model-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .model-card:hover {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+        }
+
+        .card-header {
+            display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;
+        }
+
+        .card-header h3 {
+            margin: 0; font-size: 18px; font-weight: 600; color: #0f172a;
+        }
+
+        .availability-section { margin-bottom: 24px; }
+
+        .availability {
+            display: grid; grid-auto-flow: column; grid-template-rows: repeat(1, 1fr); gap: 4px;
+            overflow-x: auto; padding-bottom: 8px; margin-top: 10px;
+        }
+
+        .status-box { width: 10px; height: 24px; border-radius: 2px; flex-shrink: 0; }
+        .status-up { background-color: var(--success); }
+        .status-down { background-color: var(--danger); }
+
+        .chart-stack { display: flex; flex-direction: column; gap: 24px; }
+        .chart-wrapper { background: #f8fafc; border-radius: 12px; padding: 16px; border: 1px solid var(--border-color); }
+        .chart-container { height: 200px; width: 100%; }
+
+        .btn {
+            padding: 10px 20px; background: var(--primary); color: white; border: none; border-radius: 8px;
+            cursor: pointer; font-weight: 600; font-size: 14px; transition: background 0.2s;
+            display: inline-flex; align-items: center; gap: 6px;
+        }
+        .btn:hover { background: #2563eb; }
+
+        .btn-outline-danger {
+            background: transparent; color: var(--danger); border: 1px solid #fecaca; padding: 6px 12px;
+        }
+        .btn-outline-danger:hover { background: #fef2f2; }
+
+        .section-title {
+            margin: 0 0 8px 0; color: var(--text-muted); font-weight: 600; font-size: 13px;
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+
+        /* Custom scrollbar for availability */
+        .availability::-webkit-scrollbar { height: 6px; }
+        .availability::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
+        .availability::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="header-top">
+            <h2>Model Telemetry Dashboard</h2>
+            <button class="btn" onclick="addModel()">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                Add Endpoint
+            </button>
+        </div>
+        <div id="models-container"></div>
+    </div>
+
+    <script>
+        let modelCount = 0;
+
+        function generateData() {
+            let data = [];
+            let now = new Date();
+            for(let i=0; i<80; i++) {
+                data.push({
+                    time: new Date(now.getTime() - (80-i)*60000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                    status: Math.random() > 0.05,
+                    tps: Math.random() * 80 + 20,
+                    ttft: Math.random() * 600 + 100
+                });
+            }
+            return data;
+        }
+
+        function addModel() {
+            modelCount++;
+            const data = generateData();
+            const container = document.getElementById('models-container');
+            const card = document.createElement('div');
+            card.className = 'model-card';
+
+            const cardId = `model-${modelCount}`;
+            const modelNames = ['gpt-4-turbo', 'claude-3-opus', 'gemini-1.5-pro', 'llama-3-70b'];
+            const modelName = modelNames[modelCount % modelNames.length] + ` (#${modelCount})`;
+
+            let statusHtml = data.map(d => `<div class="status-box ${d.status ? 'status-up' : 'status-down'}" title="${d.time} | ${d.status ? 'Online' : 'Offline'}"></div>`).join('');
+
+            card.innerHTML = `
+                <div class="card-header">
+                    <h3>${modelName}</h3>
+                    <button class="btn btn-outline-danger" onclick="this.parentElement.parentElement.remove()">Remove</button>
+                </div>
+
+                <div class="availability-section">
+                    <h4 class="section-title">Availability Timeline</h4>
+                    <div class="availability">${statusHtml}</div>
+                </div>
+
+                <div class="chart-stack">
+                    <div class="chart-wrapper">
+                        <h4 class="section-title">Tokens Per Second (T/s)</h4>
+                        <div class="chart-container" id="tps-${cardId}"></div>
+                    </div>
+
+                    <div class="chart-wrapper">
+                        <h4 class="section-title">Time To First Token (TTFT - ms)</h4>
+                        <div class="chart-container" id="ttft-${cardId}"></div>
+                    </div>
+                </div>
+            `;
+            // Insert at the top
+            container.insertBefore(card, container.firstChild);
+
+            const times = data.map(d => d.time);
+
+            // Common ECharts Option template
+            const getChartOption = (dataArr, color, name) => ({
+                tooltip: {
+                    trigger: 'axis',
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                    borderColor: '#e2e8f0',
+                    textStyle: { color: '#1e293b' },
+                    padding: [10, 15]
+                },
+                grid: { left: 40, right: 20, top: 15, bottom: 25 },
+                xAxis: {
+                    type: 'category',
+                    data: times,
+                    boundaryGap: false,
+                    axisLine: { lineStyle: { color: '#cbd5e1' } },
+                    axisLabel: { color: '#64748b' },
+                    axisTick: { show: false }
+                },
+                yAxis: {
+                    type: 'value',
+                    splitLine: { lineStyle: { color: '#f1f5f9', type: 'dashed' } },
+                    axisLabel: { color: '#64748b' }
+                },
+                series: [{
+                    name: name,
+                    data: dataArr,
+                    type: 'line',
+                    smooth: true,
+                    symbol: 'none',
+                    lineStyle: { width: 3, color: color },
+                    areaStyle: {
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: color + '40' }, // 40 is hex for 25% opacity
+                            { offset: 1, color: color + '00' }
+                        ])
+                    },
+                    itemStyle: { color: color }
+                }]
+            });
+
+            // Init TPS Chart
+            const tpsChart = echarts.init(document.getElementById(`tps-${cardId}`));
+            tpsChart.setOption(getChartOption(data.map(d => d.tps), '#3b82f6', 'Token/s'));
+
+            // Init TTFT Chart
+            const ttftChart = echarts.init(document.getElementById(`ttft-${cardId}`));
+            ttftChart.setOption(getChartOption(data.map(d => d.ttft), '#8b5cf6', 'TTFT'));
+
+            window.addEventListener('resize', () => {
+                tpsChart.resize();
+                ttftChart.resize();
+            });
+        }
+
+        // Initialize with one model
+        addModel();
+    </script>
+</body>
+</html>

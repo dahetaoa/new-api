@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model Latency Dashboard - V1</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+        .dashboard { max-width: 1200px; margin: 0 auto; }
+        .model-card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .availability { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 10px; margin-bottom: 15px; }
+        .status-box { width: 15px; height: 15px; border-radius: 2px; flex-shrink: 0; }
+        .status-up { background-color: #2ea043; }
+        .status-down { background-color: #da3633; }
+        .chart-container { position: relative; height: 200px; width: 100%; margin-bottom: 15px; }
+        button { padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+            <h2>Model Latency Dashboard</h2>
+            <button onclick="addModel()">+ Add Model</button>
+        </div>
+        <div id="models-container"></div>
+    </div>
+
+    <script>
+        let modelCount = 0;
+
+        function generateMockData(count) {
+            return Array.from({length: count}, (_, i) => ({
+                time: new Date(Date.now() - (count - i) * 60000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                status: Math.random() > 0.1,
+                tps: Math.random() * 50 + 20,
+                ttft: Math.random() * 500 + 100
+            }));
+        }
+
+        function addModel() {
+            modelCount++;
+            const data = generateMockData(60); // 60 minutes
+            const container = document.getElementById('models-container');
+            const card = document.createElement('div');
+            card.className = 'model-card';
+
+            const cardId = `model-${modelCount}`;
+
+            let statusHtml = data.map(d => `<div class="status-box ${d.status ? 'status-up' : 'status-down'}" title="${d.time}"></div>`).join('');
+
+            card.innerHTML = `
+                <div class="header">
+                    <h3 style="margin: 0;">Model Endpoint ${modelCount}</h3>
+                    <button style="background:#dc3545;" onclick="this.parentElement.parentElement.remove()">Remove</button>
+                </div>
+                <h4 style="margin: 10px 0;">Availability</h4>
+                <div class="availability">${statusHtml}</div>
+                <h4 style="margin: 10px 0;">Token/s Speed</h4>
+                <div class="chart-container"><canvas id="tps-${cardId}"></canvas></div>
+                <h4 style="margin: 10px 0;">TTFT (ms)</h4>
+                <div class="chart-container"><canvas id="ttft-${cardId}"></canvas></div>
+            `;
+            container.appendChild(card);
+
+            const labels = data.map(d => d.time);
+
+            new Chart(document.getElementById(`tps-${cardId}`), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Token/s',
+                        data: data.map(d => d.tps),
+                        borderColor: '#007bff',
+                        tension: 0.4,
+                        fill: false
+                    }]
+                },
+                options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+            });
+
+            new Chart(document.getElementById(`ttft-${cardId}`), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'TTFT (ms)',
+                        data: data.map(d => d.ttft),
+                        borderColor: '#ffc107',
+                        tension: 0.4,
+                        fill: false
+                    }]
+                },
+                options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+            });
+        }
+
+        // Add one initial model
+        addModel();
+    </script>
+</body>
+</html>

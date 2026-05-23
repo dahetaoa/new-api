@@ -197,6 +197,8 @@ export interface LogStatistics {
   quota: number
   rpm: number
   tpm: number
+  prompt_tokens: number
+  completion_tokens: number
 }
 
 // ============================================================================

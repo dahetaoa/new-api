@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model Latency Dashboard - V3 (Tailwind)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-50 p-6 font-sans">
+    <div class="max-w-5xl mx-auto">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-2xl font-bold text-slate-800">Model Performance Monitor</h1>
+            <button onclick="addModel()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded shadow transition">Add Model</button>
+        </div>
+        <div id="models-container" class="space-y-6"></div>
+    </div>
+
+    <script>
+        let modelCount = 0;
+
+        function addModel() {
+            modelCount++;
+            const data = Array.from({length: 40}, (_, i) => ({
+                time: i,
+                status: Math.random() > 0.08,
+                tps: Math.floor(Math.random() * 40 + 30),
+                ttft: Math.floor(Math.random() * 300 + 200)
+            }));
+
+            const container = document.getElementById('models-container');
+            const cardId = `m${modelCount}`;
+
+            const card = document.createElement('div');
+            card.className = "bg-white p-5 rounded-xl shadow-sm border border-slate-200";
+
+            const statusHtml = data.map(d =>
+                `<div class="h-6 flex-1 rounded-sm ${d.status ? 'bg-emerald-400' : 'bg-rose-500'}"></div>`
+            ).join('');
+
+            card.innerHTML = `
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-semibold text-slate-700">Claude-3-Opus Instance ${modelCount}</h2>
+                    <button onclick="this.closest('.bg-white').remove()" class="text-slate-400 hover:text-rose-500 transition">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+
+                <div class="mb-4">
+                    <div class="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Availability (Last 40 periods)</div>
+                    <div class="flex gap-1 w-full">${statusHtml}</div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="border border-slate-100 rounded p-3 bg-slate-50/50">
+                        <div class="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Tokens / Sec</div>
+                        <div class="relative h-32"><canvas id="tps-${cardId}"></canvas></div>
+                    </div>
+                    <div class="border border-slate-100 rounded p-3 bg-slate-50/50">
+                        <div class="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">TTFT (ms)</div>
+                        <div class="relative h-32"><canvas id="ttft-${cardId}"></canvas></div>
+                    </div>
+                </div>
+            `;
+            container.appendChild(card);
+
+            const labels = data.map(d => d.time);
+
+            const commonOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { display: false },
+                    y: { border: { display: false }, grid: { color: '#f1f5f9' }, beginAtZero: true, ticks: { font: { size: 10 } } }
+                },
+                elements: { point: { radius: 0, hitRadius: 10 } }
+            };
+
+            new Chart(document.getElementById(`tps-${cardId}`), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data.map(d => d.tps),
+                        borderColor: '#6366f1',
+                        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: commonOptions
+            });
+
+            new Chart(document.getElementById(`ttft-${cardId}`), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data.map(d => d.ttft),
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: commonOptions
+            });
+        }
+
+        addModel();
+    </script>
+</body>
+</html>
