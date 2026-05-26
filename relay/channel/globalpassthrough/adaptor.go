@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
@@ -77,6 +79,15 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if info == nil {
 		return "", errors.New("relay info is nil")
 	}
+	if requestPath := strings.TrimSpace(info.RequestURLPath); strings.HasPrefix(requestPath, "/") {
+		if info.RelayFormat == types.RelayFormatGemini {
+			requestPath = stripGeminiGatewayAuthQuery(requestPath)
+		}
+		if info.RelayFormat == types.RelayFormatGemini && info.IsStream {
+			info.DisablePing = true
+		}
+		return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, requestPath, info.ChannelType), nil
+	}
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAIResponses, types.RelayFormatOpenAIResponsesCompaction:
 		requestPath := ResolveOpenAIResponsePath(info.ChannelSetting)
@@ -124,8 +135,42 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	}
 }
 
+func stripGeminiGatewayAuthQuery(requestPath string) string {
+	pathAndQuery, fragment, hasFragment := strings.Cut(requestPath, "#")
+	path, rawQuery, hasQuery := strings.Cut(pathAndQuery, "?")
+	if !hasQuery || rawQuery == "" {
+		return requestPath
+	}
+
+	kept := make([]string, 0, strings.Count(rawQuery, "&")+1)
+	for _, part := range strings.Split(rawQuery, "&") {
+		name := part
+		if idx := strings.Index(part, "="); idx >= 0 {
+			name = part[:idx]
+		}
+		if decodedName, err := url.QueryUnescape(name); err == nil {
+			name = decodedName
+		}
+		if strings.EqualFold(strings.TrimSpace(name), "key") {
+			continue
+		}
+		kept = append(kept, part)
+	}
+
+	if len(kept) > 0 {
+		path += "?" + strings.Join(kept, "&")
+	}
+	if hasFragment {
+		path += "#" + fragment
+	}
+	return path
+}
+
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
-	channel.SetupApiRequestHeader(info, c, req)
+	channel.CopyPassthroughRequestHeaders(c, req)
+	if info.IsStream && req.Get("Accept") == "" {
+		req.Set("Accept", "text/event-stream")
+	}
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:
 		req.Set("x-api-key", info.ApiKey)
@@ -151,19 +196,23 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
-	return nil, errors.New("global passthrough channel: endpoint not supported")
+	return request, nil
 }
 
 func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.EmbeddingRequest) (any, error) {
-	return nil, errors.New("global passthrough channel: endpoint not supported")
+	return request, nil
 }
 
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
-	return nil, errors.New("global passthrough channel: endpoint not supported")
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return nil, err
+	}
+	return common.ReaderOnly(storage), nil
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
-	return nil, errors.New("global passthrough channel: endpoint not supported")
+	return request, nil
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {

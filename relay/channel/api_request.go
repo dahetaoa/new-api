@@ -127,6 +127,27 @@ func shouldSkipPassthroughHeader(name string) bool {
 	return false
 }
 
+func ShouldSkipPassthroughHeader(name string) bool {
+	return shouldSkipPassthroughHeader(name)
+}
+
+func CopyPassthroughRequestHeaders(c *gin.Context, req *http.Header) {
+	if c == nil || c.Request == nil || req == nil {
+		return
+	}
+	for name, values := range c.Request.Header {
+		if shouldSkipPassthroughHeader(name) {
+			continue
+		}
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" {
+				continue
+			}
+			req.Add(name, value)
+		}
+	}
+}
+
 func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey string) (string, bool, error) {
 	trimmed := strings.TrimSpace(template)
 	if strings.HasPrefix(trimmed, clientHeaderPlaceholderPrefix) {

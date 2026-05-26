@@ -206,6 +206,44 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 	isBatch := strings.HasSuffix(c.Request.URL.Path, "batchEmbedContents")
 	info.IsGeminiBatchEmbedding = isBatch
 
+	adaptor := GetAdaptor(info.ApiType)
+	if adaptor == nil {
+		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
+	}
+	adaptor.Init(info)
+
+	if relaycommon.ShouldDirectPassthrough(info) {
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		resp, err := adaptor.DoRequest(c, info, common.ReaderOnly(storage))
+		if err != nil {
+			logger.LogError(c, "Do gemini request failed: "+err.Error())
+			return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
+		}
+
+		statusCodeMappingStr := c.GetString("status_code_mapping")
+		var httpResp *http.Response
+		if resp != nil {
+			httpResp = resp.(*http.Response)
+			if httpResp.StatusCode != http.StatusOK {
+				newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+				service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+				return newAPIError
+			}
+		}
+
+		usage, openaiErr := adaptor.DoResponse(c, httpResp, info)
+		if openaiErr != nil {
+			service.ResetStatusCode(openaiErr, statusCodeMappingStr)
+			return openaiErr
+		}
+
+		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
+		return nil
+	}
+
 	var req dto.Request
 	var err error
 	var inputTexts []string
@@ -244,12 +282,6 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 	}
 
 	req.SetModelName("models/" + info.UpstreamModelName)
-
-	adaptor := GetAdaptor(info.ApiType)
-	if adaptor == nil {
-		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
-	}
-	adaptor.Init(info)
 
 	var requestBody io.Reader
 	jsonData, err := common.Marshal(req)
